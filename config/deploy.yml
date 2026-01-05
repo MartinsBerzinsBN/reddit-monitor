@@ -1,0 +1,43 @@
+# Name of your application. Used to uniquely configure containers.
+service: reddit-monitor
+
+ssh:
+  user: martins
+
+# Name of the container image.
+image: martinsberzinsbn/reddit-monitor
+
+# Deploy to these servers.
+servers:
+  web:
+    - bn-vm.bnsystems.lv
+
+proxy:
+  ssl: false
+  host: reddit-monitor.bnsystems.lv
+  app_port: 4009
+  healthcheck: # <-- Correctly placed inside the proxy block
+    path: /up
+
+# Credentials for your image host.
+registry:
+  server: ghcr.io
+  username: MartinsBerzinsBN
+  password:
+    - CONTAINER_REGISTRY_PASSWORD
+
+# Configure builder setup.
+builder:
+  arch: amd64
+  # build on the bee-link
+  remote: ssh://martins@bn-vm.bnsystems.lv
+
+# Path to database
+volumes:
+  - /home/martins/reddit-monitor/data:/usr/src/app/data
+
+env:
+  clear:
+    PORT: 4009
+  secret:
+    - DISCORD_WEBHOOK_URL
