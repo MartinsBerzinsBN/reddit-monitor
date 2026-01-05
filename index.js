@@ -13,6 +13,8 @@ function unixSecondsNow() {
 }
 
 async function pollOnce({ config, db }) {
+  const startedAtMs = Date.now();
+
   const feed = await fetchRssFeed({
     feedUrl: config.feedUrl,
     userAgent: config.userAgent,
@@ -21,9 +23,14 @@ async function pollOnce({ config, db }) {
   const posts = normalizeFeedItems(feed);
   const now = unixSecondsNow();
 
+  let matchedCount = 0;
+  let alertedCount = 0;
+
   for (const post of posts) {
     const keyword = findKeywordMatch(post.title, post.body);
     if (!keyword) continue;
+
+    matchedCount += 1;
 
     const subreddit = post.subreddit || "unknown";
     const postRow = {
@@ -49,6 +56,7 @@ async function pollOnce({ config, db }) {
       });
 
       db.setAlerted(post.postId, now);
+      alertedCount += 1;
       // eslint-disable-next-line no-console
       console.log(`[alerted] r/${subreddit} ${post.postId} (${keyword})`);
     } catch (err) {
@@ -62,6 +70,12 @@ async function pollOnce({ config, db }) {
   }
 
   db.purgeRetention(config.retentionDays, now);
+
+  const durationMs = Date.now() - startedAtMs;
+  // eslint-disable-next-line no-console
+  console.log(
+    `[poll] done items=${posts.length} matched=${matchedCount} alerted=${alertedCount} durationMs=${durationMs}`
+  );
 }
 
 async function startPolling({ config, db }) {
@@ -72,6 +86,8 @@ async function startPolling({ config, db }) {
     running = true;
 
     try {
+      // eslint-disable-next-line no-console
+      console.log("[poll] start");
       await pollOnce({ config, db });
     } catch (err) {
       // eslint-disable-next-line no-console
