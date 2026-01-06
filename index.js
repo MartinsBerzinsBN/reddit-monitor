@@ -21,6 +21,13 @@ async function pollOnce({ config, db }) {
   let alertedCount = 0;
 
   for (const profile of config.profiles) {
+    const profileStartedAtMs = Date.now();
+    let profileItemsCount = 0;
+    let profileMatchedCount = 0;
+    let profileAlertedCount = 0;
+
+    // eslint-disable-next-line no-console
+    console.log(`[poll] profile=${profile.id} start`);
     const feed = await fetchRssFeed({
       feedUrl: profile.feedUrl,
       userAgent: config.userAgent,
@@ -28,12 +35,14 @@ async function pollOnce({ config, db }) {
 
     const posts = normalizeFeedItems(feed);
     itemsCount += posts.length;
+    profileItemsCount += posts.length;
 
     for (const post of posts) {
       const keyword = findKeywordMatch(post.title, post.body, profile.keywords);
       if (!keyword) continue;
 
       matchedCount += 1;
+      profileMatchedCount += 1;
 
       const subreddit = post.subreddit || "unknown";
       const postRow = {
@@ -62,6 +71,7 @@ async function pollOnce({ config, db }) {
 
         db.setAlerted(profile.id, post.postId, now);
         alertedCount += 1;
+        profileAlertedCount += 1;
         // eslint-disable-next-line no-console
         console.log(
           `[alerted] profile=${profile.id} r/${subreddit} ${post.postId} (${keyword})`
@@ -76,6 +86,15 @@ async function pollOnce({ config, db }) {
         console.error(`[discord-failed] ${post.postId}:`, err);
       }
     }
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `[poll] profile=${
+        profile.id
+      } done items=${profileItemsCount} matched=${profileMatchedCount} alerted=${profileAlertedCount} durationMs=${
+        Date.now() - profileStartedAtMs
+      }`
+    );
   }
 
   db.purgeRetention(config.retentionDays, now);
