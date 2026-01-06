@@ -15,7 +15,8 @@ function initDb(sqlitePath) {
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS posts (
-      post_id TEXT PRIMARY KEY,
+      profile_id TEXT NOT NULL,
+      post_id TEXT NOT NULL,
       subreddit TEXT,
       title TEXT,
       link TEXT,
@@ -23,31 +24,33 @@ function initDb(sqlitePath) {
       first_seen_at INTEGER NOT NULL,
       published_at INTEGER,
       alerted_at INTEGER,
-      last_error TEXT
+      last_error TEXT,
+      PRIMARY KEY (profile_id, post_id)
     );
 
     CREATE INDEX IF NOT EXISTS idx_posts_first_seen_at ON posts(first_seen_at);
     CREATE INDEX IF NOT EXISTS idx_posts_alerted_at ON posts(alerted_at);
+    CREATE INDEX IF NOT EXISTS idx_posts_profile_id ON posts(profile_id);
   `);
 
   const insertOrIgnore = db.prepare(`
     INSERT OR IGNORE INTO posts (
-      post_id, subreddit, title, link, matched_keyword, first_seen_at, published_at, alerted_at, last_error
+      profile_id, post_id, subreddit, title, link, matched_keyword, first_seen_at, published_at, alerted_at, last_error
     ) VALUES (
-      @post_id, @subreddit, @title, @link, @matched_keyword, @first_seen_at, @published_at, NULL, NULL
+      @profile_id, @post_id, @subreddit, @title, @link, @matched_keyword, @first_seen_at, @published_at, NULL, NULL
     )
   `);
 
   const getAlertState = db.prepare(
-    "SELECT alerted_at FROM posts WHERE post_id = ?"
+    "SELECT alerted_at FROM posts WHERE profile_id = ? AND post_id = ?"
   );
 
   const markAlerted = db.prepare(
-    "UPDATE posts SET alerted_at = ?, last_error = NULL WHERE post_id = ?"
+    "UPDATE posts SET alerted_at = ?, last_error = NULL WHERE profile_id = ? AND post_id = ?"
   );
 
   const markError = db.prepare(
-    "UPDATE posts SET last_error = ? WHERE post_id = ?"
+    "UPDATE posts SET last_error = ? WHERE profile_id = ? AND post_id = ?"
   );
 
   const purgeOlderThanFirstSeen = db.prepare(
@@ -56,16 +59,16 @@ function initDb(sqlitePath) {
 
   function insertIfNew(postRow) {
     insertOrIgnore.run(postRow);
-    const row = getAlertState.get(postRow.post_id);
+    const row = getAlertState.get(postRow.profile_id, postRow.post_id);
     return { alreadyAlerted: !!row?.alerted_at };
   }
 
-  function setAlerted(postId, unixSecondsNow) {
-    markAlerted.run(unixSecondsNow, postId);
+  function setAlerted(profileId, postId, unixSecondsNow) {
+    markAlerted.run(unixSecondsNow, profileId, postId);
   }
 
-  function setLastError(postId, errorMessage) {
-    markError.run(errorMessage, postId);
+  function setLastError(profileId, postId, errorMessage) {
+    markError.run(errorMessage, profileId, postId);
   }
 
   function purgeRetention(retentionDays, unixSecondsNow) {

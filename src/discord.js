@@ -1,11 +1,20 @@
 async function sendDiscordWebhook({
   webhookUrl,
+  taskName,
   keyword,
   subreddit,
   title,
   link,
 }) {
-  const content = `**New Lead Found!** [Keyword: ${keyword}]\n**Sub:** r/${subreddit}\n**Title:** ${title}\n**Link:** ${link}`;
+  const content = [
+    `**New Lead Found!** [Keyword: ${keyword}]`,
+    taskName ? `**Business:** ${taskName}` : null,
+    `**Sub:** r/${subreddit}`,
+    `**Title:** ${title}`,
+    `**Link:** ${link}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const res = await fetch(webhookUrl, {
     method: "POST",

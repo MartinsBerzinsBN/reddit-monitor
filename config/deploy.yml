@@ -33,6 +33,12 @@ builder:
   remote: ssh://martins@bn-vm.bnsystems.lv
 
 # Path to database
+# NOTE: This app stores its SQLite DB at ./data/reddit-monitor.sqlite (inside the container: /usr/src/app/data/reddit-monitor.sqlite)
+# If you deploy a non-backwards-compatible schema change and are assuming a blank DB (no migrations), stop the service and delete the persisted DB files on the host:
+#   /home/martins/reddit-monitor/data/reddit-monitor.sqlite
+#   /home/martins/reddit-monitor/data/reddit-monitor.sqlite-wal
+#   /home/martins/reddit-monitor/data/reddit-monitor.sqlite-shm
+# Then redeploy/restart and the DB will be recreated.
 volumes:
   - /home/martins/reddit-monitor/data:/usr/src/app/data
 

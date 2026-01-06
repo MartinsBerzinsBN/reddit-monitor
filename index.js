@@ -14,58 +14,67 @@ function unixSecondsNow() {
 
 async function pollOnce({ config, db }) {
   const startedAtMs = Date.now();
-
-  const feed = await fetchRssFeed({
-    feedUrl: config.feedUrl,
-    userAgent: config.userAgent,
-  });
-
-  const posts = normalizeFeedItems(feed);
   const now = unixSecondsNow();
 
+  let itemsCount = 0;
   let matchedCount = 0;
   let alertedCount = 0;
 
-  for (const post of posts) {
-    const keyword = findKeywordMatch(post.title, post.body);
-    if (!keyword) continue;
+  for (const profile of config.profiles) {
+    const feed = await fetchRssFeed({
+      feedUrl: profile.feedUrl,
+      userAgent: config.userAgent,
+    });
 
-    matchedCount += 1;
+    const posts = normalizeFeedItems(feed);
+    itemsCount += posts.length;
 
-    const subreddit = post.subreddit || "unknown";
-    const postRow = {
-      post_id: post.postId,
-      subreddit,
-      title: post.title,
-      link: post.link,
-      matched_keyword: keyword,
-      first_seen_at: now,
-      published_at: post.publishedAt,
-    };
+    for (const post of posts) {
+      const keyword = findKeywordMatch(post.title, post.body, profile.keywords);
+      if (!keyword) continue;
 
-    const { alreadyAlerted } = db.insertIfNew(postRow);
-    if (alreadyAlerted) continue;
+      matchedCount += 1;
 
-    try {
-      await sendDiscordWebhook({
-        webhookUrl: config.discordWebhookUrl,
-        keyword,
+      const subreddit = post.subreddit || "unknown";
+      const postRow = {
+        profile_id: profile.id,
+        post_id: post.postId,
         subreddit,
         title: post.title,
         link: post.link,
-      });
+        matched_keyword: keyword,
+        first_seen_at: now,
+        published_at: post.publishedAt,
+      };
 
-      db.setAlerted(post.postId, now);
-      alertedCount += 1;
-      // eslint-disable-next-line no-console
-      console.log(`[alerted] r/${subreddit} ${post.postId} (${keyword})`);
-    } catch (err) {
-      db.setLastError(
-        post.postId,
-        err instanceof Error ? err.message : String(err)
-      );
-      // eslint-disable-next-line no-console
-      console.error(`[discord-failed] ${post.postId}:`, err);
+      const { alreadyAlerted } = db.insertIfNew(postRow);
+      if (alreadyAlerted) continue;
+
+      try {
+        await sendDiscordWebhook({
+          webhookUrl: config.discordWebhookUrl,
+          taskName: profile.name || profile.id,
+          keyword,
+          subreddit,
+          title: post.title,
+          link: post.link,
+        });
+
+        db.setAlerted(profile.id, post.postId, now);
+        alertedCount += 1;
+        // eslint-disable-next-line no-console
+        console.log(
+          `[alerted] profile=${profile.id} r/${subreddit} ${post.postId} (${keyword})`
+        );
+      } catch (err) {
+        db.setLastError(
+          profile.id,
+          post.postId,
+          err instanceof Error ? err.message : String(err)
+        );
+        // eslint-disable-next-line no-console
+        console.error(`[discord-failed] ${post.postId}:`, err);
+      }
     }
   }
 
@@ -74,7 +83,7 @@ async function pollOnce({ config, db }) {
   const durationMs = Date.now() - startedAtMs;
   // eslint-disable-next-line no-console
   console.log(
-    `[poll] done items=${posts.length} matched=${matchedCount} alerted=${alertedCount} durationMs=${durationMs}`
+    `[poll] done items=${itemsCount} matched=${matchedCount} alerted=${alertedCount} durationMs=${durationMs}`
   );
 }
 
@@ -115,8 +124,10 @@ async function main() {
     console.log(`[http] listening on :${config.port}`);
   });
 
-  // eslint-disable-next-line no-console
-  console.log(`[rss] ${config.feedUrl}`);
+  for (const profile of config.profiles) {
+    // eslint-disable-next-line no-console
+    console.log(`[rss] profile=${profile.id} ${profile.feedUrl}`);
+  }
   // eslint-disable-next-line no-console
   console.log(`[db] ${config.sqlitePath}`);
 
