@@ -4,16 +4,27 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "nuxt dev"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
-    "dotenv": "^16.4.7",
-    "express": "^5.2.1",
-    "rss-parser": "^3.13.0"
+    "@nuxt/fonts": "0.13.0",
+    "@nuxt/icon": "2.2.1",
+    "@nuxt/image": "2.0.0",
+    "@nuxtjs/tailwindcss": "6.14.0",
+    "better-sqlite3": "11.10.0",
+    "dotenv": "16.4.7",
+    "express": "5.2.1",
+    "nuxt": "4.3.1",
+    "nuxt-auth-utils": "0.5.28",
+    "openai": "6.21.0",
+    "rss-parser": "3.13.0",
+    "sqlite-vec": "^0.1.7-alpha.2",
+    "uuid": "13.0.0",
+    "vue": "3.5.28",
+    "vue-router": "4.6.4",
+    "zod": "^4.3.6"
   }
 }

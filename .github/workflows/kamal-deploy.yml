@@ -48,5 +48,7 @@ jobs:
       - name: Run deploy command
         env:
           CONTAINER_REGISTRY_PASSWORD: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          NUXT_DISCORD_WEBHOOK_URL: ${{ secrets.NUXT_DISCORD_WEBHOOK_URL }}
+          NUXT_SESSION_PASSWORD: ${{ secrets.NUXT_SESSION_PASSWORD }}
+          NUXT_OPENAI_API_KEY: ${{ secrets.NUXT_OPENAI_API_KEY }}
         run: kamal deploy -v --version latest
