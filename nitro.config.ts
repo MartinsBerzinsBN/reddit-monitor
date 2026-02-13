@@ -3,6 +3,6 @@ export default defineNitroConfig({
     tasks: true,
   },
   scheduledTasks: {
-    "*/20 * * * *": ["engine:ingest"],
+    "*/5 * * * *": ["engine:ingest"],
   },
 });

@@ -21,6 +21,10 @@ export async function runIngestion({ subredditList, heuristicPatterns }) {
   const now = Math.floor(Date.now() / 1000);
   const regex = buildPainRegex(heuristicPatterns);
 
+  console.log(
+    `[engine] ingest start configured_subreddits=${(subredditList || []).join(",")}`,
+  );
+
   const feed = await fetchRssFeed({
     subreddits: subredditList,
     userAgent: DEFAULT_USER_AGENT,
@@ -29,6 +33,14 @@ export async function runIngestion({ subredditList, heuristicPatterns }) {
   const posts = normalizeFeedItems(feed);
   const filtered = posts.filter((post) =>
     passesHeuristicFilter({ title: post.title, body: post.body, regex }),
+  );
+  const seenSubreddits = [...new Set(posts.map((post) => post.subreddit).filter(Boolean))];
+  const filteredSubreddits = [
+    ...new Set(filtered.map((post) => post.subreddit).filter(Boolean)),
+  ];
+
+  console.log(
+    `[engine] ingest subreddits_seen=${seenSubreddits.join(",")} subreddits_filtered=${filteredSubreddits.join(",")}`,
   );
 
   const stats = {
@@ -103,6 +115,10 @@ export async function runIngestion({ subredditList, heuristicPatterns }) {
   }
 
   stats.prunedOrphans = pruneOrphanClusters();
+
+  console.log(
+    `[engine] ingest done total=${stats.total} filtered=${stats.filtered} analyzed=${stats.analyzed} new=${stats.clusteredNew} existing=${stats.clusteredExisting}`,
+  );
 
   return stats;
 }

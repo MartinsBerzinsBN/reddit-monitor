@@ -7,9 +7,7 @@ import { initSchema } from "./schema";
 const dbPath = path.resolve(process.cwd(), "db/db.db");
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-const db = new Database(dbPath, {
-  verbose: process.env.NODE_ENV === "development" ? console.log : null,
-});
+const db = new Database(dbPath);
 
 let sqliteVecLoaded = false;
 try {
