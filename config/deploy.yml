@@ -14,10 +14,10 @@ servers:
 
 proxy:
   ssl: false
-  host: reddit-monitor.bnsystems.lv
+  host: ideas.bnsystems.lv
   app_port: 4009
   healthcheck: # <-- Correctly placed inside the proxy block
-    path: /up
+    path: /api/up
 
 # Credentials for your image host.
 registry:
@@ -40,10 +40,12 @@ builder:
 #   /home/martins/reddit-monitor/data/reddit-monitor.sqlite-shm
 # Then redeploy/restart and the DB will be recreated.
 volumes:
-  - /home/martins/reddit-monitor/data:/usr/src/app/data
+  - /home/martins/reddit-monitor/db:/usr/src/app/db
 
 env:
   clear:
     PORT: 4009
   secret:
-    - DISCORD_WEBHOOK_URL
+    - NUXT_DISCORD_WEBHOOK_URL
+    - NUXT_SESSION_PASSWORD
+    - NUXT_OPENAI_API_KEY
