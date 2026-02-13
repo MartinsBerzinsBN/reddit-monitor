@@ -40,11 +40,11 @@ builder:
 #   /home/martins/reddit-monitor/data/reddit-monitor.sqlite-shm
 # Then redeploy/restart and the DB will be recreated.
 volumes:
-  - /home/martins/reddit-monitor/db:/usr/src/app/db
+  - /home/martins/reddit-monitor/db:/app/db
 
 env:
   clear:
-    PORT: 4009
+    NITRO_PORT: 4009
   secret:
     - NUXT_DISCORD_WEBHOOK_URL
     - NUXT_SESSION_PASSWORD

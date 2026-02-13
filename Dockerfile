@@ -18,15 +18,17 @@ FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV NITRO_HOST=0.0.0.0
-ENV NITRO_PORT=3000
+    NITRO_HOST=0.0.0.0
+	HOST=0.0.0.0
+    NITRO_PORT=4009
+	PORT=4009
 
 COPY --from=build /app/.output ./.output
 
 RUN mkdir -p /app/db \
   && chown -R node:node /app
 
-EXPOSE 3000
+EXPOSE 4009
 
 USER node
 CMD ["node", ".output/server/index.mjs"]
