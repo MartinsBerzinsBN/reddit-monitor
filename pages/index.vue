@@ -3,6 +3,8 @@ const sort = ref("demand");
 const running = ref(false);
 const runError = ref("");
 const runSuccess = ref("");
+const exportError = ref("");
+const exportSuccess = ref("");
 
 const { data, pending, error, refresh } = await useFetch("/api/opportunities", {
   query: {
@@ -29,6 +31,48 @@ async function runEngine() {
   } finally {
     running.value = false;
   }
+}
+
+function downloadOpportunitiesMarkdown() {
+  exportError.value = "";
+  exportSuccess.value = "";
+
+  const items = data.value?.items || [];
+  if (!items.length) {
+    exportError.value = "No opportunities available to export.";
+    return;
+  }
+
+  const markdown = [
+    "# Opportunities export",
+    "",
+    `Generated: ${new Date().toISOString()}`,
+    "",
+    ...items.flatMap((item, index) => [
+      `## ${index + 1}. ${item.title || "Untitled opportunity"}`,
+      "",
+      "### Reddit text",
+      item.description || "No Reddit text available.",
+      "",
+      "### AI idea",
+      item.solution_idea || "No AI idea available.",
+      "",
+    ]),
+  ].join("\n");
+
+  const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = `opportunities-${timestamp}.md`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  exportSuccess.value = "Markdown export downloaded.";
 }
 
 async function logout() {
@@ -84,11 +128,25 @@ async function logout() {
         >
           {{ running ? "Running..." : "Run ingest" }}
         </button>
+
+        <button
+          :disabled="pending || !data?.items?.length"
+          class="rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold hover:bg-white/10 disabled:opacity-70"
+          @click="downloadOpportunitiesMarkdown"
+        >
+          Download .md
+        </button>
       </div>
 
       <p v-if="runError" class="mt-3 text-sm text-rose-400">{{ runError }}</p>
       <p v-if="runSuccess" class="mt-3 text-sm text-emerald-400">
         {{ runSuccess }}
+      </p>
+      <p v-if="exportError" class="mt-2 text-sm text-rose-400">
+        {{ exportError }}
+      </p>
+      <p v-if="exportSuccess" class="mt-2 text-sm text-emerald-400">
+        {{ exportSuccess }}
       </p>
 
       <div v-if="pending" class="mt-8 text-slate-300">
