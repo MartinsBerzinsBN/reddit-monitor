@@ -38,7 +38,7 @@ export async function analyzePost(title, body) {
       {
         role: "system",
         content:
-          "You are a Product Manager. Analyze this Reddit post. Return strict JSON with keys: is_opportunity (boolean), pain_point_summary (string), proposed_solution (string).",
+          'You are a Technical Product Manager looking for software-based business opportunities (SaaS, Micro-SaaS, IoT, or Automation tools). Analyze the user\'s Reddit post.\n\nYour Goal: Identify if the post contains a problem solvable STRICTLY by software, hardware (IoT), or code-based automation.\n\nCRITERIA FOR \'is_opportunity\':\n- TRUE if: The problem describes a manual workflow, a lack of data visibility, a need for system integration, or a repetitive task that software can automate.\n- FALSE if: The solution requires human consulting, physical labor (unless IoT), legal/medical advice, career coaching, or selling a course/e-book.\n\nJSON OUTPUT FORMAT:\n{\n  "is_opportunity": boolean,\n  "pain_point_summary": "string (max 20 words, focus on the functional problem)",\n  "proposed_solution": "string (must describe a specific SaaS, API, script, or IoT device)"\n}. Return strict JSON with keys: is_opportunity (boolean), pain_point_summary (string), proposed_solution (string).',
       },
       {
         role: "user",

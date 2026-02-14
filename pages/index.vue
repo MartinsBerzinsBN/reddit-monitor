@@ -1,10 +1,32 @@
 <script setup>
 const sort = ref("demand");
 const running = ref(false);
+const rerunning = ref(false);
 const runError = ref("");
 const runSuccess = ref("");
+const rerunError = ref("");
+const rerunSuccess = ref("");
 const exportError = ref("");
 const exportSuccess = ref("");
+const rerunProgress = ref({
+  status: "idle",
+  active: false,
+  total: 0,
+  processed: 0,
+  percent: 0,
+  message: "",
+  error: null,
+});
+
+let rerunProgressTimer = null;
+
+const rerunPercent = computed(() => {
+  return Math.max(0, Math.min(100, Number(rerunProgress.value?.percent) || 0));
+});
+
+const showRerunOverlay = computed(() => {
+  return rerunning.value || rerunProgress.value?.status === "running";
+});
 
 const { data, pending, error, refresh } = await useFetch("/api/opportunities", {
   query: {
@@ -32,6 +54,55 @@ async function runEngine() {
     running.value = false;
   }
 }
+
+async function fetchRerunProgress() {
+  try {
+    rerunProgress.value = await $fetch("/api/engine/reanalyze-progress");
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function startRerunProgressPolling() {
+  stopRerunProgressPolling();
+  fetchRerunProgress();
+  rerunProgressTimer = setInterval(fetchRerunProgress, 1000);
+}
+
+function stopRerunProgressPolling() {
+  if (rerunProgressTimer) {
+    clearInterval(rerunProgressTimer);
+    rerunProgressTimer = null;
+  }
+}
+
+async function rerunAnalysis() {
+  rerunError.value = "";
+  rerunSuccess.value = "";
+  rerunning.value = true;
+  startRerunProgressPolling();
+
+  try {
+    const response = await $fetch("/api/engine/reanalyze", {
+      method: "POST",
+    });
+
+    rerunSuccess.value = `Re-analysis complete. New: ${response.stats.clusteredNew}, Matched: ${response.stats.clusteredExisting}, Skipped: ${response.stats.skipped}`;
+    await refresh();
+  } catch (error) {
+    rerunError.value =
+      error.data.message || "Genering error message if .message is not passed.";
+    console.error(error);
+  } finally {
+    await fetchRerunProgress();
+    stopRerunProgressPolling();
+    rerunning.value = false;
+  }
+}
+
+onBeforeUnmount(() => {
+  stopRerunProgressPolling();
+});
 
 function downloadOpportunitiesMarkdown() {
   exportError.value = "";
@@ -130,6 +201,14 @@ async function logout() {
         </button>
 
         <button
+          :disabled="rerunning"
+          class="rounded-lg bg-violet-500 px-3 py-2 text-sm font-semibold hover:bg-violet-400 disabled:opacity-70"
+          @click="rerunAnalysis"
+        >
+          {{ rerunning ? "Re-analyzing..." : "Re-run analysis" }}
+        </button>
+
+        <button
           :disabled="pending || !data?.items?.length"
           class="rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold hover:bg-white/10 disabled:opacity-70"
           @click="downloadOpportunitiesMarkdown"
@@ -141,6 +220,20 @@ async function logout() {
       <p v-if="runError" class="mt-3 text-sm text-rose-400">{{ runError }}</p>
       <p v-if="runSuccess" class="mt-3 text-sm text-emerald-400">
         {{ runSuccess }}
+      </p>
+      <p v-if="rerunError" class="mt-2 text-sm text-rose-400">
+        {{ rerunError }}
+      </p>
+      <p v-if="rerunSuccess" class="mt-2 text-sm text-emerald-400">
+        {{ rerunSuccess }}
+      </p>
+      <p
+        v-if="
+          !rerunning && rerunProgress.status === 'failed' && rerunProgress.error
+        "
+        class="mt-2 text-sm text-rose-400"
+      >
+        {{ rerunProgress.error }}
       </p>
       <p v-if="exportError" class="mt-2 text-sm text-rose-400">
         {{ exportError }}
@@ -208,6 +301,38 @@ async function logout() {
           </div>
         </NuxtLink>
       </section>
+    </div>
+
+    <div
+      v-if="showRerunOverlay"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
+    >
+      <div
+        class="w-full max-w-md rounded-xl border border-white/20 bg-slate-900 p-5"
+      >
+        <div class="flex items-center gap-2">
+          <span
+            class="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-violet-300 border-t-transparent"
+          />
+          <p class="text-base font-semibold text-white">Re-analyzing posts</p>
+        </div>
+        <p class="mt-1 text-sm text-slate-300">
+          {{ rerunProgress.message || "Processing existing Reddit posts..." }}
+        </p>
+
+        <div class="mt-4 h-2 w-full rounded-full bg-white/10">
+          <div
+            class="h-2 rounded-full bg-violet-400 transition-all duration-300"
+            :style="{ width: `${rerunPercent}%` }"
+          />
+        </div>
+
+        <p class="mt-2 text-xs text-slate-300">
+          {{ rerunPercent }}% · {{ rerunProgress.processed || 0 }}/{{
+            rerunProgress.total || 0
+          }}
+        </p>
+      </div>
     </div>
   </main>
 </template>

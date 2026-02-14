@@ -8,8 +8,19 @@ import {
 import { buildPainRegex, passesHeuristicFilter } from "./heuristics";
 import { fetchRssFeed, normalizeFeedItems } from "./rss";
 import { sqliteVecReady } from "./sqlite";
-import { isPostAlreadyAnalyzed, pruneOrphanClusters } from "./sqlite-helpers";
+import {
+  isPostAlreadyAnalyzed,
+  listAllAnalyzedPosts,
+  pruneOrphanClusters,
+  resetOpportunityData,
+} from "./sqlite-helpers";
 import { sendDiscordNewPostNotification } from "./notifications";
+import {
+  completeReanalyzeProgress,
+  failReanalyzeProgress,
+  startReanalyzeProgress,
+  updateReanalyzeProgress,
+} from "./reanalyze-progress";
 
 export async function runIngestion({ subredditList, heuristicPatterns }) {
   if (!sqliteVecReady) {
@@ -34,7 +45,9 @@ export async function runIngestion({ subredditList, heuristicPatterns }) {
   const filtered = posts.filter((post) =>
     passesHeuristicFilter({ title: post.title, body: post.body, regex }),
   );
-  const seenSubreddits = [...new Set(posts.map((post) => post.subreddit).filter(Boolean))];
+  const seenSubreddits = [
+    ...new Set(posts.map((post) => post.subreddit).filter(Boolean)),
+  ];
   const filteredSubreddits = [
     ...new Set(filtered.map((post) => post.subreddit).filter(Boolean)),
   ];
@@ -121,4 +134,93 @@ export async function runIngestion({ subredditList, heuristicPatterns }) {
   );
 
   return stats;
+}
+
+export async function rerunAnalysisForExistingPosts() {
+  if (!sqliteVecReady) {
+    throw new Error(
+      "sqlite-vec extension is not available. Install/load sqlite-vec before running re-analysis.",
+    );
+  }
+
+  try {
+    const existingPosts = listAllAnalyzedPosts();
+    console.log(
+      `[engine] reanalyze start existing_posts=${existingPosts.length}`,
+    );
+
+    startReanalyzeProgress(existingPosts.length);
+
+    const stats = {
+      total: existingPosts.length,
+      analyzed: 0,
+      clusteredExisting: 0,
+      clusteredNew: 0,
+      skipped: 0,
+    };
+
+    if (!existingPosts.length) {
+      completeReanalyzeProgress(stats);
+      console.log("[engine] reanalyze done existing_posts=0");
+      return stats;
+    }
+
+    console.log("[engine] reanalyze reset existing clusters and vectors");
+    resetOpportunityData();
+
+    const now = Math.floor(Date.now() / 1000);
+
+    for (const stored of existingPosts) {
+      const analysis = await analyzePost(stored.title, stored.body);
+      stats.analyzed += 1;
+
+      updateReanalyzeProgress({
+        processed: stats.analyzed,
+        message: `Analyzed ${stats.analyzed}/${stats.total}`,
+      });
+
+      if (stats.analyzed % 10 === 0 || stats.analyzed === stats.total) {
+        console.log(
+          `[engine] reanalyze progress analyzed=${stats.analyzed}/${stats.total}`,
+        );
+      }
+
+      if (!analysis.is_opportunity) {
+        stats.skipped += 1;
+        continue;
+      }
+
+      const embedding = await getEmbedding(analysis.pain_point_summary);
+      const nearest = findNearestCluster(embedding);
+      const post = {
+        postId: stored.ID,
+        subreddit: stored.subreddit,
+        title: stored.title,
+        body: stored.body,
+        link: stored.url,
+        publishedAt: stored.created_at,
+      };
+
+      if (nearest?.clusterId) {
+        attachPostToCluster({ clusterId: nearest.clusterId, post, now });
+        stats.clusteredExisting += 1;
+        continue;
+      }
+
+      createClusterFromPost({ analysis, embedding, post, now });
+      stats.clusteredNew += 1;
+    }
+
+    stats.prunedOrphans = pruneOrphanClusters();
+    completeReanalyzeProgress(stats);
+
+    console.log(
+      `[engine] reanalyze done total=${stats.total} analyzed=${stats.analyzed} new=${stats.clusteredNew} existing=${stats.clusteredExisting} skipped=${stats.skipped} pruned=${stats.prunedOrphans}`,
+    );
+
+    return stats;
+  } catch (error) {
+    failReanalyzeProgress(error);
+    throw error;
+  }
 }

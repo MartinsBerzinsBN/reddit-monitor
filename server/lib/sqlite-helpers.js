@@ -65,6 +65,23 @@ export function getPostsByClusterId(clusterId) {
   return stmt.all(clusterId);
 }
 
+export function listAllAnalyzedPosts() {
+  const stmt = db.prepare(
+    "SELECT ID, subreddit, title, body, url, created_at FROM analyzed_posts ORDER BY created_at ASC",
+  );
+  return stmt.all();
+}
+
+export function resetOpportunityData() {
+  const transaction = db.transaction(() => {
+    db.prepare("DELETE FROM analyzed_posts").run();
+    db.prepare("DELETE FROM vec_opportunities").run();
+    db.prepare("DELETE FROM opportunity_clusters").run();
+  });
+
+  transaction();
+}
+
 export function isPostAlreadyAnalyzed(postId) {
   const stmt = db.prepare("SELECT 1 FROM analyzed_posts WHERE ID = ? LIMIT 1");
   return !!stmt.get(postId);
