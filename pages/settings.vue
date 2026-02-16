@@ -4,6 +4,7 @@ const heuristicInput = ref("");
 const saveError = ref("");
 const saveSuccess = ref("");
 const saving = ref(false);
+const cronIngestEnabled = ref(true);
 
 const { data, pending, refresh } = await useFetch("/api/settings");
 
@@ -12,6 +13,17 @@ const subredditList = computed(
 );
 const heuristicPatterns = computed(
   () => data.value?.settings?.heuristic_patterns || [],
+);
+const currentCronIngestEnabled = computed(
+  () => data.value?.settings?.cron_ingest_enabled !== false,
+);
+
+watch(
+  () => data.value?.settings?.cron_ingest_enabled,
+  (value) => {
+    cronIngestEnabled.value = value !== false;
+  },
+  { immediate: true },
 );
 
 async function saveSettings() {
@@ -39,6 +51,7 @@ async function saveSettings() {
         heuristic_patterns: nextPatterns.length
           ? nextPatterns
           : heuristicPatterns.value,
+        cron_ingest_enabled: cronIngestEnabled.value,
       },
     });
 
@@ -82,6 +95,27 @@ async function saveSettings() {
             <li v-for="item in heuristicPatterns" :key="item">{{ item }}</li>
           </ul>
         </div>
+
+        <div
+          class="rounded-xl border border-white/10 bg-slate-900/70 p-4 md:col-span-2"
+        >
+          <h2 class="text-base font-semibold">Scheduled ingestion (cron)</h2>
+          <p class="mt-2 text-sm text-slate-300">
+            Current status:
+            <span
+              class="font-medium"
+              :class="
+                currentCronIngestEnabled ? 'text-emerald-300' : 'text-amber-300'
+              "
+            >
+              {{ currentCronIngestEnabled ? "Enabled" : "Disabled" }}
+            </span>
+          </p>
+          <p class="mt-1 text-xs text-slate-400">
+            This only affects automatic cron runs. Manual "Run ingest" still
+            works.
+          </p>
+        </div>
       </section>
 
       <form
@@ -113,6 +147,27 @@ async function saveSettings() {
             class="w-full rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm outline-none ring-indigo-500/40 transition focus:ring"
           />
         </label>
+
+        <div
+          class="mt-4 flex items-center justify-between rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm"
+        >
+          <div>
+            <p class="text-slate-200">Enable scheduled cron ingest</p>
+            <p class="text-xs text-slate-400">Automatic check for new posts</p>
+          </div>
+
+          <label class="relative inline-flex cursor-pointer items-center">
+            <input
+              v-model="cronIngestEnabled"
+              type="checkbox"
+              class="peer sr-only"
+              :disabled="saving"
+            />
+            <span
+              class="h-6 w-11 rounded-full bg-slate-700 transition-colors duration-200 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-transform after:duration-200 peer-checked:bg-indigo-500 peer-checked:after:translate-x-5 peer-disabled:cursor-not-allowed peer-disabled:opacity-60"
+            />
+          </label>
+        </div>
 
         <p v-if="saveError" class="mt-3 text-sm text-rose-400">
           {{ saveError }}

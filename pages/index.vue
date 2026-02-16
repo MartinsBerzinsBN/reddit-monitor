@@ -17,6 +17,7 @@ const rerunProgress = ref({
   message: "",
   error: null,
 });
+const rerunMode = ref("reanalyze");
 
 let rerunProgressTimer = null;
 
@@ -33,6 +34,12 @@ const { data, pending, error, refresh } = await useFetch("/api/opportunities", {
     sort,
   },
 });
+
+const { data: settingsData } = await useFetch("/api/settings");
+
+const cronIngestEnabled = computed(
+  () => settingsData.value?.settings?.cron_ingest_enabled !== false,
+);
 
 async function runEngine() {
   runError.value = "";
@@ -76,7 +83,8 @@ function stopRerunProgressPolling() {
   }
 }
 
-async function rerunAnalysis() {
+async function reanalyzeAll() {
+  rerunMode.value = "reanalyze";
   rerunError.value = "";
   rerunSuccess.value = "";
   rerunning.value = true;
@@ -87,7 +95,32 @@ async function rerunAnalysis() {
       method: "POST",
     });
 
-    rerunSuccess.value = `Re-analysis complete. New: ${response.stats.clusteredNew}, Matched: ${response.stats.clusteredExisting}, Skipped: ${response.stats.skipped}`;
+    rerunSuccess.value = `Re-cluster complete. New: ${response.stats.clusteredNew}, Matched: ${response.stats.clusteredExisting}, Skipped: ${response.stats.skipped}`;
+    await refresh();
+  } catch (error) {
+    rerunError.value =
+      error.data.message || "Genering error message if .message is not passed.";
+    console.error(error);
+  } finally {
+    await fetchRerunProgress();
+    stopRerunProgressPolling();
+    rerunning.value = false;
+  }
+}
+
+async function reclusterAll() {
+  rerunMode.value = "recluster";
+  rerunError.value = "";
+  rerunSuccess.value = "";
+  rerunning.value = true;
+  startRerunProgressPolling();
+
+  try {
+    const response = await $fetch("/api/engine/recluster", {
+      method: "POST",
+    });
+
+    rerunSuccess.value = `Re-cluster complete. New: ${response.stats.clusteredNew}, Matched: ${response.stats.clusteredExisting}, Reused: ${response.stats.reusedAnalysis || 0}, Skipped: ${response.stats.skipped}`;
     await refresh();
   } catch (error) {
     rerunError.value =
@@ -122,11 +155,14 @@ function downloadOpportunitiesMarkdown() {
     ...items.flatMap((item, index) => [
       `## ${index + 1}. ${item.title || "Untitled opportunity"}`,
       "",
-      "### Reddit text",
-      item.description || "No Reddit text available.",
+      "### Pain Point",
+      item.description || "No Pain Point available.",
       "",
       "### AI idea",
       item.solution_idea || "No AI idea available.",
+      "",
+      "### Vector string",
+      item.vector_string || "No vector string available.",
       "",
     ]),
   ].join("\n");
@@ -160,7 +196,19 @@ async function logout() {
           <h1 class="text-3xl font-semibold tracking-tight">
             Market Validator
           </h1>
-          <p class="mt-1 text-sm text-slate-400">Opportunity dashboard</p>
+          <p class="mt-1 text-sm text-slate-400">
+            Opportunity dashboard ·
+            <span v-if="pending">Loading opportunities...</span>
+            <span v-else>
+              {{ data?.items?.length || 0 }}
+              {{
+                (data?.items?.length || 0) === 1
+                  ? "opportunity"
+                  : "opportunities"
+              }}
+              loaded
+            </span>
+          </p>
         </div>
 
         <div class="flex flex-wrap gap-2">
@@ -180,6 +228,17 @@ async function logout() {
       </header>
 
       <div class="mt-6 flex flex-wrap items-center gap-3">
+        <span
+          class="rounded-full border px-2.5 py-1 text-xs font-medium"
+          :class="
+            cronIngestEnabled
+              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+              : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+          "
+        >
+          Cron: {{ cronIngestEnabled ? "Enabled" : "Disabled" }}
+        </span>
+
         <label class="text-sm text-slate-300">
           Sort:
           <select
@@ -203,9 +262,17 @@ async function logout() {
         <button
           :disabled="rerunning"
           class="rounded-lg bg-violet-500 px-3 py-2 text-sm font-semibold hover:bg-violet-400 disabled:opacity-70"
-          @click="rerunAnalysis"
+          @click="reanalyzeAll"
         >
-          {{ rerunning ? "Re-analyzing..." : "Re-run analysis" }}
+          {{ rerunning ? "Re-analyzing..." : "Re-analyze all" }}
+        </button>
+
+        <button
+          :disabled="rerunning"
+          class="rounded-lg bg-fuchsia-500 px-3 py-2 text-sm font-semibold hover:bg-fuchsia-400 disabled:opacity-70"
+          @click="reclusterAll"
+        >
+          {{ rerunning ? "Re-clustering..." : "Re-cluster all" }}
         </button>
 
         <button
@@ -287,7 +354,7 @@ async function logout() {
             {{ item.title }}
           </h2>
           <p class="mt-2 line-clamp-3 text-sm text-slate-300">
-            {{ item.description }}
+            {{ item.solution_idea }}
           </p>
 
           <div class="mt-3 flex flex-wrap gap-1">
@@ -314,10 +381,21 @@ async function logout() {
           <span
             class="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-violet-300 border-t-transparent"
           />
-          <p class="text-base font-semibold text-white">Re-analyzing posts</p>
+          <p class="text-base font-semibold text-white">
+            {{
+              rerunMode === "recluster"
+                ? "Re-clustering opportunities"
+                : "Re-analyzing posts"
+            }}
+          </p>
         </div>
         <p class="mt-1 text-sm text-slate-300">
-          {{ rerunProgress.message || "Processing existing Reddit posts..." }}
+          {{
+            rerunProgress.message ||
+            (rerunMode === "recluster"
+              ? "Rebuilding clusters from existing Reddit posts..."
+              : "Re-analyzing existing Reddit posts...")
+          }}
         </p>
 
         <div class="mt-4 h-2 w-full rounded-full bg-white/10">

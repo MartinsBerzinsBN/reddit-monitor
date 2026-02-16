@@ -23,9 +23,45 @@ export function listOpportunities({ sort = "demand" } = {}) {
       ? "last_seen_at DESC, post_count DESC"
       : "post_count DESC, last_seen_at DESC";
 
+  let vectorStmt = null;
+  try {
+    vectorStmt = db.prepare(
+      "SELECT embedding FROM vec_opportunities WHERE rowid = ? LIMIT 1",
+    );
+  } catch {
+    vectorStmt = null;
+  }
+
+  const toVectorString = (value) => {
+    if (value == null) {
+      return null;
+    }
+
+    if (typeof value === "string") {
+      return value;
+    }
+
+    if (Array.isArray(value)) {
+      return `[${value.join(", ")}]`;
+    }
+
+    if (value instanceof Uint8Array) {
+      const length = Math.floor(value.byteLength / 4);
+      if (!length) {
+        return null;
+      }
+
+      const floats = new Float32Array(value.buffer, value.byteOffset, length);
+      return `[${Array.from(floats).join(", ")}]`;
+    }
+
+    return String(value);
+  };
+
   const query = `
     SELECT
       c.ID,
+      c.rowid AS cluster_rowid,
       c.title,
       c.description,
       c.solution_idea,
@@ -43,12 +79,23 @@ export function listOpportunities({ sort = "demand" } = {}) {
   return db
     .prepare(query)
     .all()
-    .map((item) => ({
-      ...item,
-      subreddit_sources: item.subreddits
-        ? item.subreddits.split(",").filter(Boolean)
-        : [],
-    }));
+    .map((item) => {
+      let vectorString = null;
+
+      if (vectorStmt && item.cluster_rowid != null) {
+        const row = vectorStmt.get(item.cluster_rowid);
+        vectorString = toVectorString(row?.embedding);
+      }
+
+      return {
+        ...item,
+        vector_string: vectorString,
+        subreddit_sources: item.subreddits
+          ? item.subreddits.split(",").filter(Boolean)
+          : [],
+      };
+    })
+    .map(({ cluster_rowid, ...item }) => item);
 }
 
 export function getOpportunityById(id) {
@@ -67,7 +114,20 @@ export function getPostsByClusterId(clusterId) {
 
 export function listAllAnalyzedPosts() {
   const stmt = db.prepare(
-    "SELECT ID, subreddit, title, body, url, created_at FROM analyzed_posts ORDER BY created_at ASC",
+    `
+      SELECT
+        p.ID,
+        p.subreddit,
+        p.title,
+        p.body,
+        p.url,
+        p.created_at,
+        c.description AS pain_point_summary,
+        c.solution_idea AS existing_solution_idea
+      FROM analyzed_posts p
+      LEFT JOIN opportunity_clusters c ON c.ID = p.cluster_id
+      ORDER BY p.created_at ASC
+    `,
   );
   return stmt.all();
 }
@@ -87,15 +147,26 @@ export function isPostAlreadyAnalyzed(postId) {
   return !!stmt.get(postId);
 }
 
-export function upsertIngestSettings({ subredditList, heuristicPatterns }) {
+export function upsertIngestSettings({
+  subredditList,
+  heuristicPatterns,
+  cronIngestEnabled = true,
+}) {
   const now = Math.floor(Date.now() / 1000);
   const stmt = db.prepare(
     `
-      INSERT INTO ingest_settings (ID, subreddit_list, heuristic_patterns, updated_at)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO ingest_settings (
+        ID,
+        subreddit_list,
+        heuristic_patterns,
+        cron_ingest_enabled,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(ID) DO UPDATE SET
         subreddit_list = excluded.subreddit_list,
         heuristic_patterns = excluded.heuristic_patterns,
+        cron_ingest_enabled = excluded.cron_ingest_enabled,
         updated_at = excluded.updated_at
     `,
   );
@@ -104,13 +175,14 @@ export function upsertIngestSettings({ subredditList, heuristicPatterns }) {
     DEFAULT_SETTINGS_ID,
     JSON.stringify(subredditList || []),
     JSON.stringify(heuristicPatterns || []),
+    cronIngestEnabled ? 1 : 0,
     now,
   );
 }
 
 export function getIngestSettings() {
   const stmt = db.prepare(
-    "SELECT subreddit_list, heuristic_patterns, updated_at FROM ingest_settings WHERE ID = ?",
+    "SELECT subreddit_list, heuristic_patterns, cron_ingest_enabled, updated_at FROM ingest_settings WHERE ID = ?",
   );
   const row = stmt.get(DEFAULT_SETTINGS_ID);
 
@@ -118,6 +190,7 @@ export function getIngestSettings() {
     return {
       subreddit_list: DEFAULT_SUBREDDITS,
       heuristic_patterns: DEFAULT_HEURISTIC_PATTERNS,
+      cron_ingest_enabled: true,
       updated_at: null,
     };
   }
@@ -125,6 +198,10 @@ export function getIngestSettings() {
   return {
     subreddit_list: JSON.parse(row.subreddit_list || "[]"),
     heuristic_patterns: JSON.parse(row.heuristic_patterns || "[]"),
+    cron_ingest_enabled:
+      row.cron_ingest_enabled === undefined || row.cron_ingest_enabled === null
+        ? true
+        : Number(row.cron_ingest_enabled) === 1,
     updated_at: row.updated_at,
   };
 }

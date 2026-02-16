@@ -37,8 +37,14 @@ const { data, pending, error, refresh } = await useFetch(
           <h1 class="text-3xl font-semibold tracking-tight">
             {{ data.item.title }}
           </h1>
-          <p class="mt-3 text-slate-300">{{ data.item.description }}</p>
         </header>
+
+        <div class="rounded-xl border border-white/10 bg-slate-900/70 p-4">
+          <h2 class="text-base font-semibold">Pain Point</h2>
+          <p class="mt-2 text-sm text-slate-300">
+            {{ data.item.description }}
+          </p>
+        </div>
 
         <div class="rounded-xl border border-white/10 bg-slate-900/70 p-4">
           <h2 class="text-base font-semibold">Proposed solution</h2>

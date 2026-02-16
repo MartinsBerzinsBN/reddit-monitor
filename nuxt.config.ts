@@ -1,6 +1,14 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   compatibilityDate: "2026-02-12",
+  nitro: {
+    experimental: {
+      tasks: true,
+    },
+    scheduledTasks: {
+      "*/5 * * * *": ["engine:ingest"],
+    },
+  },
   // Runtime config for environment variables
   runtimeConfig: {
     openaiApiKey: "", // can be overridden by NUXT_OPENAI_API_KEY environment variable

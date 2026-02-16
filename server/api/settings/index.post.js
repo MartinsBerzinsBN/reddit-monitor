@@ -30,9 +30,27 @@ function normalizeStringArray(value) {
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event);
+  const currentSettings = getIngestSettings();
 
   const subredditList = normalizeStringArray(body?.subreddit_list);
   const heuristicPatterns = normalizeStringArray(body?.heuristic_patterns);
+  const cronIngestEnabledRaw = body?.cron_ingest_enabled;
+
+  if (
+    cronIngestEnabledRaw !== undefined &&
+    typeof cronIngestEnabledRaw !== "boolean"
+  ) {
+    throw createError({
+      status: 400,
+      statusText: "Bad Request",
+      message: "cron_ingest_enabled must be a boolean.",
+    });
+  }
+
+  const cronIngestEnabled =
+    cronIngestEnabledRaw === undefined
+      ? currentSettings.cron_ingest_enabled
+      : cronIngestEnabledRaw;
 
   if (!subredditList.length) {
     throw createError({
@@ -50,7 +68,11 @@ export default defineEventHandler(async (event) => {
     });
   }
 
-  upsertIngestSettings({ subredditList, heuristicPatterns });
+  upsertIngestSettings({
+    subredditList,
+    heuristicPatterns,
+    cronIngestEnabled,
+  });
 
   return {
     success: true,

@@ -43,9 +43,24 @@ export function initSchema(db, { sqliteVecLoaded = false } = {}) {
       ID TEXT PRIMARY KEY,
       subreddit_list TEXT NOT NULL,
       heuristic_patterns TEXT NOT NULL,
+      cron_ingest_enabled INTEGER NOT NULL DEFAULT 1,
       updated_at INTEGER NOT NULL
     );
   `);
+
+  const ingestSettingsColumns = db
+    .prepare("PRAGMA table_info(ingest_settings)")
+    .all();
+  const hasCronIngestEnabled = ingestSettingsColumns.some(
+    (column) => column.name === "cron_ingest_enabled",
+  );
+
+  if (!hasCronIngestEnabled) {
+    db.exec(`
+      ALTER TABLE ingest_settings
+      ADD COLUMN cron_ingest_enabled INTEGER NOT NULL DEFAULT 1
+    `);
+  }
 
   if (sqliteVecLoaded) {
     db.exec(`

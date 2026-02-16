@@ -136,7 +136,9 @@ export async function runIngestion({ subredditList, heuristicPatterns }) {
   return stats;
 }
 
-export async function rerunAnalysisForExistingPosts() {
+export async function rerunAnalysisForExistingPosts({
+  reuseExistingAnalysis = false,
+} = {}) {
   if (!sqliteVecReady) {
     throw new Error(
       "sqlite-vec extension is not available. Install/load sqlite-vec before running re-analysis.",
@@ -145,8 +147,10 @@ export async function rerunAnalysisForExistingPosts() {
 
   try {
     const existingPosts = listAllAnalyzedPosts();
+    const mode = reuseExistingAnalysis ? "recluster" : "reanalyze";
+
     console.log(
-      `[engine] reanalyze start existing_posts=${existingPosts.length}`,
+      `[engine] ${mode} start existing_posts=${existingPosts.length}`,
     );
 
     startReanalyzeProgress(existingPosts.length);
@@ -157,31 +161,45 @@ export async function rerunAnalysisForExistingPosts() {
       clusteredExisting: 0,
       clusteredNew: 0,
       skipped: 0,
+      reusedAnalysis: 0,
     };
 
     if (!existingPosts.length) {
       completeReanalyzeProgress(stats);
-      console.log("[engine] reanalyze done existing_posts=0");
+      console.log(`[engine] ${mode} done existing_posts=0`);
       return stats;
     }
 
-    console.log("[engine] reanalyze reset existing clusters and vectors");
+    console.log(`[engine] ${mode} reset existing clusters and vectors`);
     resetOpportunityData();
 
     const now = Math.floor(Date.now() / 1000);
 
     for (const stored of existingPosts) {
-      const analysis = await analyzePost(stored.title, stored.body);
+      let analysis = null;
+
+      if (reuseExistingAnalysis && stored.pain_point_summary) {
+        analysis = {
+          is_opportunity: true,
+          pain_point_summary: stored.pain_point_summary,
+          proposed_solution:
+            stored.existing_solution_idea || "No AI idea available.",
+        };
+        stats.reusedAnalysis += 1;
+      } else {
+        analysis = await analyzePost(stored.title, stored.body);
+      }
+
       stats.analyzed += 1;
 
       updateReanalyzeProgress({
         processed: stats.analyzed,
-        message: `Analyzed ${stats.analyzed}/${stats.total}`,
+        message: `${reuseExistingAnalysis ? "Processed" : "Analyzed"} ${stats.analyzed}/${stats.total}`,
       });
 
       if (stats.analyzed % 10 === 0 || stats.analyzed === stats.total) {
         console.log(
-          `[engine] reanalyze progress analyzed=${stats.analyzed}/${stats.total}`,
+          `[engine] ${mode} progress analyzed=${stats.analyzed}/${stats.total}`,
         );
       }
 
@@ -207,7 +225,18 @@ export async function rerunAnalysisForExistingPosts() {
         continue;
       }
 
-      createClusterFromPost({ analysis, embedding, post, now });
+      createClusterFromPost({
+        analysis: {
+          ...analysis,
+          proposed_solution:
+            analysis.proposed_solution ||
+            stored.existing_solution_idea ||
+            "No AI idea available.",
+        },
+        embedding,
+        post,
+        now,
+      });
       stats.clusteredNew += 1;
     }
 
@@ -215,7 +244,7 @@ export async function rerunAnalysisForExistingPosts() {
     completeReanalyzeProgress(stats);
 
     console.log(
-      `[engine] reanalyze done total=${stats.total} analyzed=${stats.analyzed} new=${stats.clusteredNew} existing=${stats.clusteredExisting} skipped=${stats.skipped} pruned=${stats.prunedOrphans}`,
+      `[engine] ${mode} done total=${stats.total} analyzed=${stats.analyzed} new=${stats.clusteredNew} existing=${stats.clusteredExisting} skipped=${stats.skipped} reused=${stats.reusedAnalysis} pruned=${stats.prunedOrphans}`,
     );
 
     return stats;

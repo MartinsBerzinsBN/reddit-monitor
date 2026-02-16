@@ -1,7 +1,13 @@
+import { runIngestion } from "../../lib/engine";
+import { getIngestSettings } from "../../lib/sqlite-helpers";
+
 export default defineEventHandler(async () => {
   try {
-    const taskResult = await runTask("engine:ingest");
-    const stats = taskResult?.result?.stats || null;
+    const settings = getIngestSettings();
+    const stats = await runIngestion({
+      subredditList: settings.subreddit_list,
+      heuristicPatterns: settings.heuristic_patterns,
+    });
 
     return {
       success: true,
