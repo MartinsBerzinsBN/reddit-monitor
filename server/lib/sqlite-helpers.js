@@ -1,5 +1,9 @@
 import db from "./sqlite";
-import { DEFAULT_HEURISTIC_PATTERNS, DEFAULT_SUBREDDITS } from "./constants";
+import {
+  DEFAULT_CLUSTER_DISTANCE_THRESHOLD,
+  DEFAULT_HEURISTIC_PATTERNS,
+  DEFAULT_SUBREDDITS,
+} from "./constants";
 
 const DEFAULT_SETTINGS_ID = "default";
 
@@ -151,6 +155,7 @@ export function upsertIngestSettings({
   subredditList,
   heuristicPatterns,
   cronIngestEnabled = true,
+  clusterDistanceThreshold = DEFAULT_CLUSTER_DISTANCE_THRESHOLD,
 }) {
   const now = Math.floor(Date.now() / 1000);
   const stmt = db.prepare(
@@ -160,29 +165,36 @@ export function upsertIngestSettings({
         subreddit_list,
         heuristic_patterns,
         cron_ingest_enabled,
+        cluster_distance_threshold,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(ID) DO UPDATE SET
         subreddit_list = excluded.subreddit_list,
         heuristic_patterns = excluded.heuristic_patterns,
         cron_ingest_enabled = excluded.cron_ingest_enabled,
+        cluster_distance_threshold = excluded.cluster_distance_threshold,
         updated_at = excluded.updated_at
     `,
   );
+
+  const normalizedThreshold = Number(clusterDistanceThreshold);
 
   stmt.run(
     DEFAULT_SETTINGS_ID,
     JSON.stringify(subredditList || []),
     JSON.stringify(heuristicPatterns || []),
     cronIngestEnabled ? 1 : 0,
+    Number.isFinite(normalizedThreshold)
+      ? normalizedThreshold
+      : DEFAULT_CLUSTER_DISTANCE_THRESHOLD,
     now,
   );
 }
 
 export function getIngestSettings() {
   const stmt = db.prepare(
-    "SELECT subreddit_list, heuristic_patterns, cron_ingest_enabled, updated_at FROM ingest_settings WHERE ID = ?",
+    "SELECT subreddit_list, heuristic_patterns, cron_ingest_enabled, cluster_distance_threshold, updated_at FROM ingest_settings WHERE ID = ?",
   );
   const row = stmt.get(DEFAULT_SETTINGS_ID);
 
@@ -191,9 +203,12 @@ export function getIngestSettings() {
       subreddit_list: DEFAULT_SUBREDDITS,
       heuristic_patterns: DEFAULT_HEURISTIC_PATTERNS,
       cron_ingest_enabled: true,
+      cluster_distance_threshold: DEFAULT_CLUSTER_DISTANCE_THRESHOLD,
       updated_at: null,
     };
   }
+
+  const parsedThreshold = Number(row.cluster_distance_threshold);
 
   return {
     subreddit_list: JSON.parse(row.subreddit_list || "[]"),
@@ -202,6 +217,9 @@ export function getIngestSettings() {
       row.cron_ingest_enabled === undefined || row.cron_ingest_enabled === null
         ? true
         : Number(row.cron_ingest_enabled) === 1,
+    cluster_distance_threshold: Number.isFinite(parsedThreshold)
+      ? parsedThreshold
+      : DEFAULT_CLUSTER_DISTANCE_THRESHOLD,
     updated_at: row.updated_at,
   };
 }
@@ -279,4 +297,68 @@ export function insertAnalyzedPost({
     createdAt,
   );
   return result.changes > 0;
+}
+
+export function deletePostFromCluster({ clusterId, postId }) {
+  const transaction = db.transaction(() => {
+    const post = db
+      .prepare(
+        "SELECT ID, cluster_id FROM analyzed_posts WHERE ID = ? AND cluster_id = ? LIMIT 1",
+      )
+      .get(postId, clusterId);
+
+    if (!post) {
+      return { deleted: false, clusterRemoved: false };
+    }
+
+    const deleteResult = db
+      .prepare("DELETE FROM analyzed_posts WHERE ID = ?")
+      .run(postId);
+
+    if (!deleteResult.changes) {
+      return { deleted: false, clusterRemoved: false };
+    }
+
+    const remaining = db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM analyzed_posts WHERE cluster_id = ?",
+      )
+      .get(clusterId);
+    const remainingCount = Number(remaining?.count || 0);
+
+    if (remainingCount <= 0) {
+      const clusterRow = db
+        .prepare("SELECT rowid FROM opportunity_clusters WHERE ID = ? LIMIT 1")
+        .get(clusterId);
+
+      if (clusterRow?.rowid != null) {
+        try {
+          db.prepare("DELETE FROM vec_opportunities WHERE rowid = ?").run(
+            clusterRow.rowid,
+          );
+        } catch {
+          // vec table may not exist if sqlite-vec failed to load
+        }
+      }
+
+      db.prepare("DELETE FROM opportunity_clusters WHERE ID = ?").run(
+        clusterId,
+      );
+      return { deleted: true, clusterRemoved: true };
+    }
+
+    const latestPost = db
+      .prepare(
+        "SELECT MAX(created_at) AS latest_created_at FROM analyzed_posts WHERE cluster_id = ?",
+      )
+      .get(clusterId);
+
+    db.prepare(
+      "UPDATE opportunity_clusters SET post_count = ?, last_seen_at = COALESCE(?, last_seen_at) WHERE ID = ?",
+    ).run(remainingCount, latestPost?.latest_created_at || null, clusterId);
+
+    return { deleted: true, clusterRemoved: false };
+  });
+
+  return transaction();
 }

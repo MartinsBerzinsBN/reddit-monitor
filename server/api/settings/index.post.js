@@ -35,6 +35,7 @@ export default defineEventHandler(async (event) => {
   const subredditList = normalizeStringArray(body?.subreddit_list);
   const heuristicPatterns = normalizeStringArray(body?.heuristic_patterns);
   const cronIngestEnabledRaw = body?.cron_ingest_enabled;
+  const clusterDistanceThresholdRaw = body?.cluster_distance_threshold;
 
   if (
     cronIngestEnabledRaw !== undefined &&
@@ -51,6 +52,20 @@ export default defineEventHandler(async (event) => {
     cronIngestEnabledRaw === undefined
       ? currentSettings.cron_ingest_enabled
       : cronIngestEnabledRaw;
+
+  let clusterDistanceThreshold = currentSettings.cluster_distance_threshold;
+  if (clusterDistanceThresholdRaw !== undefined) {
+    const parsedThreshold = Number(clusterDistanceThresholdRaw);
+    if (!Number.isFinite(parsedThreshold) || parsedThreshold < 0) {
+      throw createError({
+        status: 400,
+        statusText: "Bad Request",
+        message: "cluster_distance_threshold must be a non-negative number.",
+      });
+    }
+
+    clusterDistanceThreshold = parsedThreshold;
+  }
 
   if (!subredditList.length) {
     throw createError({
@@ -72,6 +87,7 @@ export default defineEventHandler(async (event) => {
     subredditList,
     heuristicPatterns,
     cronIngestEnabled,
+    clusterDistanceThreshold,
   });
 
   return {

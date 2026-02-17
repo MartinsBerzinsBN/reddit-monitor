@@ -1,8 +1,12 @@
 import { rerunAnalysisForExistingPosts } from "../../lib/engine";
+import { getIngestSettings } from "../../lib/sqlite-helpers";
 
 export default defineEventHandler(async () => {
   try {
-    const stats = await rerunAnalysisForExistingPosts();
+    const settings = getIngestSettings();
+    const stats = await rerunAnalysisForExistingPosts({
+      clusterDistanceThreshold: settings.cluster_distance_threshold,
+    });
 
     return {
       success: true,

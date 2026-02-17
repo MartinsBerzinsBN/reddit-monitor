@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import fs from "node:fs";
 import path from "path";
-import { initSchema } from "./schema";
+import { initSchema } from "./schema.js";
 
 const dbPath = path.resolve(process.cwd(), "db/db.db");
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });

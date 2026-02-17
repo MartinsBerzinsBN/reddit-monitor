@@ -9,6 +9,7 @@ import { buildPainRegex, passesHeuristicFilter } from "./heuristics";
 import { fetchRssFeed, normalizeFeedItems } from "./rss";
 import { sqliteVecReady } from "./sqlite";
 import {
+  getIngestSettings,
   isPostAlreadyAnalyzed,
   listAllAnalyzedPosts,
   pruneOrphanClusters,
@@ -22,22 +23,36 @@ import {
   updateReanalyzeProgress,
 } from "./reanalyze-progress";
 
-export async function runIngestion({ subredditList, heuristicPatterns }) {
+export async function runIngestion({
+  subredditList,
+  heuristicPatterns,
+  clusterDistanceThreshold,
+} = {}) {
   if (!sqliteVecReady) {
     throw new Error(
       "sqlite-vec extension is not available. Install/load sqlite-vec before running ingestion.",
     );
   }
 
+  const settings = getIngestSettings();
+  const effectiveSubredditList = subredditList || settings.subreddit_list;
+  const effectiveHeuristicPatterns =
+    heuristicPatterns || settings.heuristic_patterns;
+
+  const parsedThreshold = Number(clusterDistanceThreshold);
+  const effectiveClusterDistanceThreshold = Number.isFinite(parsedThreshold)
+    ? parsedThreshold
+    : settings.cluster_distance_threshold;
+
   const now = Math.floor(Date.now() / 1000);
-  const regex = buildPainRegex(heuristicPatterns);
+  const regex = buildPainRegex(effectiveHeuristicPatterns);
 
   console.log(
-    `[engine] ingest start configured_subreddits=${(subredditList || []).join(",")}`,
+    `[engine] ingest start configured_subreddits=${(effectiveSubredditList || []).join(",")} threshold=${effectiveClusterDistanceThreshold}`,
   );
 
   const feed = await fetchRssFeed({
-    subreddits: subredditList,
+    subreddits: effectiveSubredditList,
     userAgent: DEFAULT_USER_AGENT,
   });
 
@@ -84,7 +99,10 @@ export async function runIngestion({ subredditList, heuristicPatterns }) {
     }
 
     const embedding = await getEmbedding(analysis.pain_point_summary);
-    const nearest = findNearestCluster(embedding);
+    const nearest = findNearestCluster(
+      embedding,
+      effectiveClusterDistanceThreshold,
+    );
 
     if (nearest?.clusterId) {
       attachPostToCluster({ clusterId: nearest.clusterId, post, now });
@@ -138,12 +156,19 @@ export async function runIngestion({ subredditList, heuristicPatterns }) {
 
 export async function rerunAnalysisForExistingPosts({
   reuseExistingAnalysis = false,
+  clusterDistanceThreshold,
 } = {}) {
   if (!sqliteVecReady) {
     throw new Error(
       "sqlite-vec extension is not available. Install/load sqlite-vec before running re-analysis.",
     );
   }
+
+  const settings = getIngestSettings();
+  const parsedThreshold = Number(clusterDistanceThreshold);
+  const effectiveClusterDistanceThreshold = Number.isFinite(parsedThreshold)
+    ? parsedThreshold
+    : settings.cluster_distance_threshold;
 
   try {
     const existingPosts = listAllAnalyzedPosts();
@@ -209,7 +234,10 @@ export async function rerunAnalysisForExistingPosts({
       }
 
       const embedding = await getEmbedding(analysis.pain_point_summary);
-      const nearest = findNearestCluster(embedding);
+      const nearest = findNearestCluster(
+        embedding,
+        effectiveClusterDistanceThreshold,
+      );
       const post = {
         postId: stored.ID,
         subreddit: stored.subreddit,

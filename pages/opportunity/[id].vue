@@ -1,9 +1,52 @@
 <script setup>
 const route = useRoute();
+const deletingPostId = ref(null);
+const deleteError = ref("");
+const deleteSuccess = ref("");
 
 const { data, pending, error, refresh } = await useFetch(
   `/api/opportunities/${route.params.id}`,
 );
+
+async function deleteEvidencePost(postId) {
+  if (!postId || deletingPostId.value) {
+    return;
+  }
+
+  if (
+    import.meta.client &&
+    !window.confirm("Delete this evidence post from the database?")
+  ) {
+    return;
+  }
+
+  deleteError.value = "";
+  deleteSuccess.value = "";
+  deletingPostId.value = postId;
+
+  try {
+    const response = await $fetch(
+      `/api/opportunities/${route.params.id}/posts/${postId}`,
+      {
+        method: "DELETE",
+      },
+    );
+
+    if (response?.clusterRemoved) {
+      await navigateTo("/");
+      return;
+    }
+
+    deleteSuccess.value = "Post deleted.";
+    await refresh();
+  } catch (error) {
+    deleteError.value =
+      error.data.message || "Genering error message if .message is not passed.";
+    console.error(error);
+  } finally {
+    deletingPostId.value = null;
+  }
+}
 </script>
 
 <template>
@@ -55,6 +98,12 @@ const { data, pending, error, refresh } = await useFetch(
 
         <div>
           <h2 class="text-xl font-semibold">Evidence locker</h2>
+          <p v-if="deleteError" class="mt-2 text-sm text-rose-400">
+            {{ deleteError }}
+          </p>
+          <p v-if="deleteSuccess" class="mt-2 text-sm text-emerald-400">
+            {{ deleteSuccess }}
+          </p>
           <div
             v-if="!data.evidence?.length"
             class="mt-3 text-sm text-slate-400"
@@ -75,14 +124,29 @@ const { data, pending, error, refresh } = await useFetch(
               <p class="mt-2 text-sm text-slate-300 line-clamp-3">
                 {{ post.body }}
               </p>
-              <a
-                :href="post.url"
-                target="_blank"
-                rel="noreferrer"
-                class="mt-3 inline-block text-sm text-indigo-300 hover:text-indigo-200"
-              >
-                Open Reddit thread
-              </a>
+
+              <div class="mt-3 flex items-center gap-4">
+                <a
+                  :href="post.url"
+                  target="_blank"
+                  rel="noreferrer"
+                  class="inline-block text-sm text-indigo-300 hover:text-indigo-200"
+                >
+                  Open Reddit thread
+                </a>
+
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-lg border border-rose-400/40 px-2 py-1 text-xs font-semibold text-rose-300 hover:bg-rose-500/10 disabled:opacity-70"
+                  :disabled="deletingPostId !== null"
+                  aria-label="Delete evidence post"
+                  title="Delete evidence post"
+                  @click="deleteEvidencePost(post.ID)"
+                >
+                  <Icon name="heroicons:trash-20-solid" class="h-4 w-4" />
+                  {{ deletingPostId === post.ID ? "Deleting..." : "Delete" }}
+                </button>
+              </div>
             </li>
           </ul>
         </div>

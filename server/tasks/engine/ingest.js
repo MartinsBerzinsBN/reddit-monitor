@@ -23,6 +23,7 @@ export default defineTask({
     const stats = await runIngestion({
       subredditList: settings.subreddit_list,
       heuristicPatterns: settings.heuristic_patterns,
+      clusterDistanceThreshold: settings.cluster_distance_threshold,
     });
 
     return {

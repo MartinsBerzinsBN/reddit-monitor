@@ -44,6 +44,7 @@ export function initSchema(db, { sqliteVecLoaded = false } = {}) {
       subreddit_list TEXT NOT NULL,
       heuristic_patterns TEXT NOT NULL,
       cron_ingest_enabled INTEGER NOT NULL DEFAULT 1,
+      cluster_distance_threshold REAL NOT NULL DEFAULT 0.65,
       updated_at INTEGER NOT NULL
     );
   `);
@@ -54,11 +55,21 @@ export function initSchema(db, { sqliteVecLoaded = false } = {}) {
   const hasCronIngestEnabled = ingestSettingsColumns.some(
     (column) => column.name === "cron_ingest_enabled",
   );
+  const hasClusterDistanceThreshold = ingestSettingsColumns.some(
+    (column) => column.name === "cluster_distance_threshold",
+  );
 
   if (!hasCronIngestEnabled) {
     db.exec(`
       ALTER TABLE ingest_settings
       ADD COLUMN cron_ingest_enabled INTEGER NOT NULL DEFAULT 1
+    `);
+  }
+
+  if (!hasClusterDistanceThreshold) {
+    db.exec(`
+      ALTER TABLE ingest_settings
+      ADD COLUMN cluster_distance_threshold REAL NOT NULL DEFAULT 0.65
     `);
   }
 
