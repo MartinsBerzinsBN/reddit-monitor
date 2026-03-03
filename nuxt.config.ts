@@ -7,6 +7,7 @@ export default defineNuxtConfig({
     },
     scheduledTasks: {
       "*/5 * * * *": ["engine:ingest"],
+      "*/10 * * * *": ["engine:link-quality"],
     },
   },
   // Runtime config for environment variables

@@ -4,8 +4,29 @@ import {
   DEFAULT_HEURISTIC_PATTERNS,
   DEFAULT_SUBREDDITS,
 } from "./constants";
+import { generateUUID } from "./uuid";
 
 const DEFAULT_SETTINGS_ID = "default";
+const LINK_CHECK_DELAY_10_MIN = 10 * 60;
+const LINK_CHECK_DELAY_24_HOURS = 24 * 60 * 60;
+const LINK_CHECK_DELAY_7_DAYS = 7 * 24 * 60 * 60;
+const LINK_CHECK_MAX_STAGE = 3;
+
+function buildNextLinkCheck(stage, createdAt) {
+  if (stage <= 0) {
+    return Number(createdAt) + LINK_CHECK_DELAY_10_MIN;
+  }
+
+  if (stage === 1) {
+    return Number(createdAt) + LINK_CHECK_DELAY_24_HOURS;
+  }
+
+  if (stage === 2) {
+    return Number(createdAt) + LINK_CHECK_DELAY_7_DAYS;
+  }
+
+  return null;
+}
 
 export function getUserByEmail(email) {
   const stmt = db.prepare(
@@ -155,6 +176,8 @@ export function upsertIngestSettings({
   subredditList,
   heuristicPatterns,
   cronIngestEnabled = true,
+  linkQualityCheckEnabled = true,
+  linkQualityBatchSize = 50,
   clusterDistanceThreshold = DEFAULT_CLUSTER_DISTANCE_THRESHOLD,
 }) {
   const now = Math.floor(Date.now() / 1000);
@@ -165,26 +188,35 @@ export function upsertIngestSettings({
         subreddit_list,
         heuristic_patterns,
         cron_ingest_enabled,
+        link_quality_check_enabled,
+        link_quality_batch_size,
         cluster_distance_threshold,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(ID) DO UPDATE SET
         subreddit_list = excluded.subreddit_list,
         heuristic_patterns = excluded.heuristic_patterns,
         cron_ingest_enabled = excluded.cron_ingest_enabled,
+        link_quality_check_enabled = excluded.link_quality_check_enabled,
+        link_quality_batch_size = excluded.link_quality_batch_size,
         cluster_distance_threshold = excluded.cluster_distance_threshold,
         updated_at = excluded.updated_at
     `,
   );
 
   const normalizedThreshold = Number(clusterDistanceThreshold);
+  const normalizedBatchSize = Number(linkQualityBatchSize);
 
   stmt.run(
     DEFAULT_SETTINGS_ID,
     JSON.stringify(subredditList || []),
     JSON.stringify(heuristicPatterns || []),
     cronIngestEnabled ? 1 : 0,
+    linkQualityCheckEnabled ? 1 : 0,
+    Number.isFinite(normalizedBatchSize) && normalizedBatchSize > 0
+      ? Math.floor(normalizedBatchSize)
+      : 50,
     Number.isFinite(normalizedThreshold)
       ? normalizedThreshold
       : DEFAULT_CLUSTER_DISTANCE_THRESHOLD,
@@ -194,7 +226,7 @@ export function upsertIngestSettings({
 
 export function getIngestSettings() {
   const stmt = db.prepare(
-    "SELECT subreddit_list, heuristic_patterns, cron_ingest_enabled, cluster_distance_threshold, updated_at FROM ingest_settings WHERE ID = ?",
+    "SELECT subreddit_list, heuristic_patterns, cron_ingest_enabled, link_quality_check_enabled, link_quality_batch_size, cluster_distance_threshold, updated_at FROM ingest_settings WHERE ID = ?",
   );
   const row = stmt.get(DEFAULT_SETTINGS_ID);
 
@@ -203,12 +235,15 @@ export function getIngestSettings() {
       subreddit_list: DEFAULT_SUBREDDITS,
       heuristic_patterns: DEFAULT_HEURISTIC_PATTERNS,
       cron_ingest_enabled: true,
+      link_quality_check_enabled: true,
+      link_quality_batch_size: 50,
       cluster_distance_threshold: DEFAULT_CLUSTER_DISTANCE_THRESHOLD,
       updated_at: null,
     };
   }
 
   const parsedThreshold = Number(row.cluster_distance_threshold);
+  const parsedBatchSize = Number(row.link_quality_batch_size);
 
   return {
     subreddit_list: JSON.parse(row.subreddit_list || "[]"),
@@ -217,6 +252,15 @@ export function getIngestSettings() {
       row.cron_ingest_enabled === undefined || row.cron_ingest_enabled === null
         ? true
         : Number(row.cron_ingest_enabled) === 1,
+    link_quality_check_enabled:
+      row.link_quality_check_enabled === undefined ||
+      row.link_quality_check_enabled === null
+        ? true
+        : Number(row.link_quality_check_enabled) === 1,
+    link_quality_batch_size:
+      Number.isFinite(parsedBatchSize) && parsedBatchSize > 0
+        ? Math.floor(parsedBatchSize)
+        : 50,
     cluster_distance_threshold: Number.isFinite(parsedThreshold)
       ? parsedThreshold
       : DEFAULT_CLUSTER_DISTANCE_THRESHOLD,
@@ -273,6 +317,13 @@ export function insertAnalyzedPost({
   url,
   createdAt,
 }) {
+  const normalizedCreatedAt = Number(createdAt);
+  const safeCreatedAt = Number.isFinite(normalizedCreatedAt)
+    ? normalizedCreatedAt
+    : Math.floor(Date.now() / 1000);
+  const initialStage = 0;
+  const initialNextCheckAt = buildNextLinkCheck(initialStage, safeCreatedAt);
+
   const stmt = db.prepare(
     `
       INSERT OR IGNORE INTO analyzed_posts (
@@ -282,8 +333,12 @@ export function insertAnalyzedPost({
         title,
         body,
         url,
-        created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        created_at,
+        link_check_stage,
+        link_last_checked_at,
+        link_next_check_at,
+        link_last_check_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   );
 
@@ -294,9 +349,233 @@ export function insertAnalyzedPost({
     title,
     body,
     url,
-    createdAt,
+    safeCreatedAt,
+    initialStage,
+    null,
+    initialNextCheckAt,
+    null,
   );
   return result.changes > 0;
+}
+
+export function listDueLinkCheckPosts({ now, limit = 50 } = {}) {
+  const safeNow = Number.isFinite(Number(now))
+    ? Number(now)
+    : Math.floor(Date.now() / 1000);
+  const safeLimit =
+    Number.isFinite(Number(limit)) && Number(limit) > 0
+      ? Math.floor(Number(limit))
+      : 50;
+
+  const stmt = db.prepare(
+    `
+      SELECT
+        ID,
+        cluster_id,
+        subreddit,
+        title,
+        body,
+        url,
+        created_at,
+        link_check_stage,
+        link_last_checked_at,
+        link_next_check_at,
+        link_last_check_status
+      FROM analyzed_posts
+      WHERE link_next_check_at IS NOT NULL
+        AND link_next_check_at <= ?
+        AND link_check_stage < ?
+      ORDER BY link_next_check_at ASC
+      LIMIT ?
+    `,
+  );
+
+  return stmt.all(safeNow, LINK_CHECK_MAX_STAGE, safeLimit);
+}
+
+export function listDueLinkChecksDebug({ now, limit = 50 } = {}) {
+  const safeNow = Number.isFinite(Number(now))
+    ? Number(now)
+    : Math.floor(Date.now() / 1000);
+  const safeLimit =
+    Number.isFinite(Number(limit)) && Number(limit) > 0
+      ? Math.floor(Number(limit))
+      : 50;
+
+  const stmt = db.prepare(
+    `
+      SELECT
+        ID,
+        cluster_id,
+        subreddit,
+        title,
+        url,
+        created_at,
+        link_check_stage,
+        link_last_checked_at,
+        link_next_check_at,
+        link_last_check_status,
+        (link_next_check_at - ?) AS due_in_seconds
+      FROM analyzed_posts
+      WHERE link_next_check_at IS NOT NULL
+        AND link_check_stage < ?
+      ORDER BY link_next_check_at ASC
+      LIMIT ?
+    `,
+  );
+
+  return stmt.all(safeNow, LINK_CHECK_MAX_STAGE, safeLimit);
+}
+
+export function markLinkCheckUnknownError({
+  postId,
+  checkedAt,
+  retryAfterSeconds = 600,
+}) {
+  const safeCheckedAt = Number.isFinite(Number(checkedAt))
+    ? Number(checkedAt)
+    : Math.floor(Date.now() / 1000);
+  const safeRetryDelay = Number.isFinite(Number(retryAfterSeconds))
+    ? Math.max(60, Math.floor(Number(retryAfterSeconds)))
+    : 600;
+
+  db.prepare(
+    `
+      UPDATE analyzed_posts
+      SET
+        link_last_checked_at = ?,
+        link_next_check_at = ?,
+        link_last_check_status = 'unknown_error'
+      WHERE ID = ?
+    `,
+  ).run(safeCheckedAt, safeCheckedAt + safeRetryDelay, postId);
+}
+
+export function markLinkCheckActive({ postId, checkedAt }) {
+  const safeCheckedAt = Number.isFinite(Number(checkedAt))
+    ? Number(checkedAt)
+    : Math.floor(Date.now() / 1000);
+
+  const row = db
+    .prepare(
+      "SELECT created_at, link_check_stage FROM analyzed_posts WHERE ID = ? LIMIT 1",
+    )
+    .get(postId);
+
+  if (!row) {
+    return false;
+  }
+
+  const currentStage = Number(row.link_check_stage || 0);
+  const nextStage = Math.min(currentStage + 1, LINK_CHECK_MAX_STAGE);
+  const nextCheckAt = buildNextLinkCheck(nextStage, row.created_at);
+
+  db.prepare(
+    `
+      UPDATE analyzed_posts
+      SET
+        link_check_stage = ?,
+        link_last_checked_at = ?,
+        link_next_check_at = ?,
+        link_last_check_status = 'active'
+      WHERE ID = ?
+    `,
+  ).run(nextStage, safeCheckedAt, nextCheckAt, postId);
+
+  return true;
+}
+
+export function deletePostById(postId) {
+  const row = db
+    .prepare("SELECT cluster_id FROM analyzed_posts WHERE ID = ? LIMIT 1")
+    .get(postId);
+
+  if (!row?.cluster_id) {
+    return { deleted: false, clusterRemoved: false };
+  }
+
+  return deletePostFromCluster({ clusterId: row.cluster_id, postId });
+}
+
+export function createLinkQualityRun({
+  startedAt,
+  finishedAt,
+  success = true,
+  skipped = false,
+  message = null,
+  stats = {},
+}) {
+  const stmt = db.prepare(
+    `
+      INSERT INTO link_quality_runs (
+        ID,
+        started_at,
+        finished_at,
+        success,
+        skipped,
+        message,
+        total_due,
+        active,
+        unknown_error,
+        removed_deleted,
+        rss_hits,
+        direct_checks
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  );
+
+  stmt.run(
+    generateUUID(),
+    Number.isFinite(Number(startedAt))
+      ? Number(startedAt)
+      : Math.floor(Date.now() / 1000),
+    Number.isFinite(Number(finishedAt))
+      ? Number(finishedAt)
+      : Math.floor(Date.now() / 1000),
+    success ? 1 : 0,
+    skipped ? 1 : 0,
+    message ? String(message) : null,
+    Number(stats.totalDue || 0),
+    Number(stats.active || 0),
+    Number(stats.unknownError || 0),
+    Number(stats.removedDeleted || 0),
+    Number(stats.rssHits || 0),
+    Number(stats.directChecks || 0),
+  );
+}
+
+export function listRecentLinkQualityRuns({ limit = 20 } = {}) {
+  const safeLimit =
+    Number.isFinite(Number(limit)) && Number(limit) > 0
+      ? Math.floor(Number(limit))
+      : 20;
+
+  const stmt = db.prepare(
+    `
+      SELECT
+        ID,
+        started_at,
+        finished_at,
+        success,
+        skipped,
+        message,
+        total_due,
+        active,
+        unknown_error,
+        removed_deleted,
+        rss_hits,
+        direct_checks
+      FROM link_quality_runs
+      ORDER BY finished_at DESC
+      LIMIT ?
+    `,
+  );
+
+  return stmt.all(safeLimit).map((row) => ({
+    ...row,
+    success: Number(row.success) === 1,
+    skipped: Number(row.skipped) === 1,
+  }));
 }
 
 export function deletePostFromCluster({ clusterId, postId }) {

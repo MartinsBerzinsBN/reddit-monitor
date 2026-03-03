@@ -14,12 +14,25 @@ const cronIngestEnabled = ref(true);
 const clusterDistanceThreshold = ref(0.65);
 
 const { data, pending, refresh } = await useFetch("/api/settings");
+const {
+  data: linkQualityDebugData,
+  pending: linkQualityDebugPending,
+  refresh: refreshLinkQualityDebug,
+  error: linkQualityDebugError,
+} = await useFetch("/api/engine/link-quality-debug");
 
 const currentCronIngestEnabled = computed(
   () => data.value?.settings?.cron_ingest_enabled !== false,
 );
 const currentClusterDistanceThreshold = computed(
   () => data.value?.settings?.cluster_distance_threshold ?? 0.65,
+);
+const linkQualityDebugSettings = computed(
+  () => linkQualityDebugData.value?.settings || null,
+);
+const linkQualityDue = computed(() => linkQualityDebugData.value?.due || null);
+const linkQualityRecentRuns = computed(
+  () => linkQualityDebugData.value?.recentRuns || [],
 );
 
 watch(
@@ -99,6 +112,40 @@ async function commitSettings(successMessage = "Settings updated.") {
 
   saveSuccess.value = successMessage;
   await refresh();
+  await refreshLinkQualityDebug();
+}
+
+function formatDebugTimestamp(value) {
+  const unix = Number(value);
+  if (!Number.isFinite(unix) || unix <= 0) {
+    return "—";
+  }
+
+  return new Date(unix * 1000).toLocaleString();
+}
+
+function formatDueInSeconds(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) {
+    return "—";
+  }
+
+  if (seconds <= 0) {
+    return "Due now";
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `In ${minutes}m`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `In ${hours}h`;
+  }
+
+  const days = Math.floor(hours / 24);
+  return `In ${days}d`;
 }
 
 async function applyListChangeWithAutoSave(changeFn, successMessage) {
@@ -501,6 +548,143 @@ async function saveSettings() {
           <p class="mt-1 text-xs text-slate-400">
             Lower values are stricter and create more new clusters.
           </p>
+        </div>
+
+        <div
+          class="rounded-xl border border-white/10 bg-slate-900/70 p-4 md:col-span-2"
+        >
+          <div class="flex items-center justify-between gap-3">
+            <h2 class="text-base font-semibold">Link quality debug</h2>
+            <button
+              type="button"
+              class="rounded-lg bg-slate-700 px-3 py-2 text-xs font-semibold hover:bg-slate-600 disabled:opacity-70"
+              :disabled="linkQualityDebugPending"
+              @click="refreshLinkQualityDebug"
+            >
+              {{ linkQualityDebugPending ? "Refreshing..." : "Refresh" }}
+            </button>
+          </div>
+
+          <p class="mt-2 text-xs text-slate-400">
+            Preview of due checks and recent checker runs.
+          </p>
+
+          <p v-if="linkQualityDebugError" class="mt-3 text-sm text-rose-400">
+            {{
+              linkQualityDebugError?.data?.message ||
+              linkQualityDebugError?.message ||
+              "Failed to load link quality debug data."
+            }}
+          </p>
+
+          <div
+            v-else
+            class="mt-3 grid gap-3 text-sm text-slate-300 md:grid-cols-3"
+          >
+            <div class="rounded-lg border border-white/10 bg-slate-950 px-3 py-2">
+              <p class="text-xs text-slate-400">Checker enabled</p>
+              <p class="mt-1 font-medium">
+                {{
+                  linkQualityDebugSettings?.link_quality_check_enabled
+                    ? "Yes"
+                    : "No"
+                }}
+              </p>
+            </div>
+            <div class="rounded-lg border border-white/10 bg-slate-950 px-3 py-2">
+              <p class="text-xs text-slate-400">Batch size</p>
+              <p class="mt-1 font-medium">
+                {{ linkQualityDebugSettings?.link_quality_batch_size ?? "—" }}
+              </p>
+            </div>
+            <div class="rounded-lg border border-white/10 bg-slate-950 px-3 py-2">
+              <p class="text-xs text-slate-400">Due now</p>
+              <p class="mt-1 font-medium">
+                {{ linkQualityDue?.dueNowCount ?? 0 }}
+              </p>
+            </div>
+          </div>
+
+          <div class="mt-4">
+            <p class="text-sm font-medium text-slate-200">Upcoming due checks</p>
+            <div
+              v-if="!linkQualityDue?.items?.length"
+              class="mt-2 text-xs text-slate-400"
+            >
+              No link checks scheduled.
+            </div>
+            <div v-else class="mt-2 max-h-56 overflow-auto rounded-lg border border-white/10">
+              <table class="min-w-full text-left text-xs">
+                <thead class="bg-slate-900 text-slate-400">
+                  <tr>
+                    <th class="px-3 py-2 font-medium">Post</th>
+                    <th class="px-3 py-2 font-medium">Stage</th>
+                    <th class="px-3 py-2 font-medium">Next check</th>
+                    <th class="px-3 py-2 font-medium">Due</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-white/10 bg-slate-950 text-slate-300">
+                  <tr v-for="item in linkQualityDue.items" :key="item.ID">
+                    <td class="px-3 py-2">
+                      <a
+                        :href="item.url"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="text-indigo-300 hover:text-indigo-200"
+                      >
+                        {{ item.title || item.ID }}
+                      </a>
+                    </td>
+                    <td class="px-3 py-2">{{ item.link_check_stage }}</td>
+                    <td class="px-3 py-2">
+                      {{ formatDebugTimestamp(item.link_next_check_at) }}
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ formatDueInSeconds(item.due_in_seconds) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="mt-4">
+            <p class="text-sm font-medium text-slate-200">Recent checker runs</p>
+            <div
+              v-if="!linkQualityRecentRuns.length"
+              class="mt-2 text-xs text-slate-400"
+            >
+              No recent runs yet.
+            </div>
+            <div v-else class="mt-2 max-h-56 overflow-auto rounded-lg border border-white/10">
+              <table class="min-w-full text-left text-xs">
+                <thead class="bg-slate-900 text-slate-400">
+                  <tr>
+                    <th class="px-3 py-2 font-medium">Finished</th>
+                    <th class="px-3 py-2 font-medium">Status</th>
+                    <th class="px-3 py-2 font-medium">Due</th>
+                    <th class="px-3 py-2 font-medium">Active</th>
+                    <th class="px-3 py-2 font-medium">Removed</th>
+                    <th class="px-3 py-2 font-medium">Unknown</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-white/10 bg-slate-950 text-slate-300">
+                  <tr v-for="run in linkQualityRecentRuns" :key="run.ID">
+                    <td class="px-3 py-2">
+                      {{ formatDebugTimestamp(run.finished_at) }}
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ run.skipped ? "Skipped" : run.success ? "OK" : "Failed" }}
+                    </td>
+                    <td class="px-3 py-2">{{ run.total_due }}</td>
+                    <td class="px-3 py-2">{{ run.active }}</td>
+                    <td class="px-3 py-2">{{ run.removed_deleted }}</td>
+                    <td class="px-3 py-2">{{ run.unknown_error }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </section>
 

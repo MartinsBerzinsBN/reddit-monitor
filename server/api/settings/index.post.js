@@ -35,6 +35,8 @@ export default defineEventHandler(async (event) => {
   const subredditList = normalizeStringArray(body?.subreddit_list);
   const heuristicPatterns = normalizeStringArray(body?.heuristic_patterns);
   const cronIngestEnabledRaw = body?.cron_ingest_enabled;
+  const linkQualityCheckEnabledRaw = body?.link_quality_check_enabled;
+  const linkQualityBatchSizeRaw = body?.link_quality_batch_size;
   const clusterDistanceThresholdRaw = body?.cluster_distance_threshold;
 
   if (
@@ -48,10 +50,40 @@ export default defineEventHandler(async (event) => {
     });
   }
 
+  if (
+    linkQualityCheckEnabledRaw !== undefined &&
+    typeof linkQualityCheckEnabledRaw !== "boolean"
+  ) {
+    throw createError({
+      status: 400,
+      statusText: "Bad Request",
+      message: "link_quality_check_enabled must be a boolean.",
+    });
+  }
+
   const cronIngestEnabled =
     cronIngestEnabledRaw === undefined
       ? currentSettings.cron_ingest_enabled
       : cronIngestEnabledRaw;
+
+  const linkQualityCheckEnabled =
+    linkQualityCheckEnabledRaw === undefined
+      ? currentSettings.link_quality_check_enabled
+      : linkQualityCheckEnabledRaw;
+
+  let linkQualityBatchSize = currentSettings.link_quality_batch_size;
+  if (linkQualityBatchSizeRaw !== undefined) {
+    const parsedBatchSize = Number(linkQualityBatchSizeRaw);
+    if (!Number.isFinite(parsedBatchSize) || parsedBatchSize <= 0) {
+      throw createError({
+        status: 400,
+        statusText: "Bad Request",
+        message: "link_quality_batch_size must be a positive number.",
+      });
+    }
+
+    linkQualityBatchSize = Math.floor(parsedBatchSize);
+  }
 
   let clusterDistanceThreshold = currentSettings.cluster_distance_threshold;
   if (clusterDistanceThresholdRaw !== undefined) {
@@ -87,6 +119,8 @@ export default defineEventHandler(async (event) => {
     subredditList,
     heuristicPatterns,
     cronIngestEnabled,
+    linkQualityCheckEnabled,
+    linkQualityBatchSize,
     clusterDistanceThreshold,
   });
 
