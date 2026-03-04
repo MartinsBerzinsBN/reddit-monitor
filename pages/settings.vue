@@ -581,7 +581,9 @@ async function saveSettings() {
             v-else
             class="mt-3 grid gap-3 text-sm text-slate-300 md:grid-cols-3"
           >
-            <div class="rounded-lg border border-white/10 bg-slate-950 px-3 py-2">
+            <div
+              class="rounded-lg border border-white/10 bg-slate-950 px-3 py-2"
+            >
               <p class="text-xs text-slate-400">Checker enabled</p>
               <p class="mt-1 font-medium">
                 {{
@@ -591,13 +593,17 @@ async function saveSettings() {
                 }}
               </p>
             </div>
-            <div class="rounded-lg border border-white/10 bg-slate-950 px-3 py-2">
+            <div
+              class="rounded-lg border border-white/10 bg-slate-950 px-3 py-2"
+            >
               <p class="text-xs text-slate-400">Batch size</p>
               <p class="mt-1 font-medium">
                 {{ linkQualityDebugSettings?.link_quality_batch_size ?? "—" }}
               </p>
             </div>
-            <div class="rounded-lg border border-white/10 bg-slate-950 px-3 py-2">
+            <div
+              class="rounded-lg border border-white/10 bg-slate-950 px-3 py-2"
+            >
               <p class="text-xs text-slate-400">Due now</p>
               <p class="mt-1 font-medium">
                 {{ linkQualityDue?.dueNowCount ?? 0 }}
@@ -606,14 +612,19 @@ async function saveSettings() {
           </div>
 
           <div class="mt-4">
-            <p class="text-sm font-medium text-slate-200">Upcoming due checks</p>
+            <p class="text-sm font-medium text-slate-200">
+              Upcoming due checks
+            </p>
             <div
               v-if="!linkQualityDue?.items?.length"
               class="mt-2 text-xs text-slate-400"
             >
               No link checks scheduled.
             </div>
-            <div v-else class="mt-2 max-h-56 overflow-auto rounded-lg border border-white/10">
+            <div
+              v-else
+              class="mt-2 max-h-56 overflow-auto rounded-lg border border-white/10"
+            >
               <table class="min-w-full text-left text-xs">
                 <thead class="bg-slate-900 text-slate-400">
                   <tr>
@@ -623,7 +634,9 @@ async function saveSettings() {
                     <th class="px-3 py-2 font-medium">Due</th>
                   </tr>
                 </thead>
-                <tbody class="divide-y divide-white/10 bg-slate-950 text-slate-300">
+                <tbody
+                  class="divide-y divide-white/10 bg-slate-950 text-slate-300"
+                >
                   <tr v-for="item in linkQualityDue.items" :key="item.ID">
                     <td class="px-3 py-2">
                       <a
@@ -649,14 +662,19 @@ async function saveSettings() {
           </div>
 
           <div class="mt-4">
-            <p class="text-sm font-medium text-slate-200">Recent checker runs</p>
+            <p class="text-sm font-medium text-slate-200">
+              Recent checker runs
+            </p>
             <div
               v-if="!linkQualityRecentRuns.length"
               class="mt-2 text-xs text-slate-400"
             >
               No recent runs yet.
             </div>
-            <div v-else class="mt-2 max-h-56 overflow-auto rounded-lg border border-white/10">
+            <div
+              v-else
+              class="mt-2 max-h-56 overflow-auto rounded-lg border border-white/10"
+            >
               <table class="min-w-full text-left text-xs">
                 <thead class="bg-slate-900 text-slate-400">
                   <tr>
@@ -668,13 +686,17 @@ async function saveSettings() {
                     <th class="px-3 py-2 font-medium">Unknown</th>
                   </tr>
                 </thead>
-                <tbody class="divide-y divide-white/10 bg-slate-950 text-slate-300">
+                <tbody
+                  class="divide-y divide-white/10 bg-slate-950 text-slate-300"
+                >
                   <tr v-for="run in linkQualityRecentRuns" :key="run.ID">
                     <td class="px-3 py-2">
                       {{ formatDebugTimestamp(run.finished_at) }}
                     </td>
                     <td class="px-3 py-2">
-                      {{ run.skipped ? "Skipped" : run.success ? "OK" : "Failed" }}
+                      {{
+                        run.skipped ? "Skipped" : run.success ? "OK" : "Failed"
+                      }}
                     </td>
                     <td class="px-3 py-2">{{ run.total_due }}</td>
                     <td class="px-3 py-2">{{ run.active }}</td>

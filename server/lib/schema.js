@@ -42,7 +42,6 @@ export function initSchema(db, { sqliteVecLoaded = false } = {}) {
 
     CREATE INDEX IF NOT EXISTS idx_posts_cluster_id ON analyzed_posts(cluster_id);
     CREATE INDEX IF NOT EXISTS idx_posts_created_at ON analyzed_posts(created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_posts_link_next_check_at ON analyzed_posts(link_next_check_at);
 
     CREATE TABLE IF NOT EXISTS ingest_settings (
       ID TEXT PRIMARY KEY,
@@ -116,6 +115,10 @@ export function initSchema(db, { sqliteVecLoaded = false } = {}) {
       ADD COLUMN link_last_check_status TEXT
     `);
   }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_posts_link_next_check_at ON analyzed_posts(link_next_check_at)
+  `);
 
   db.exec(`
     UPDATE analyzed_posts
