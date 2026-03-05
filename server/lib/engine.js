@@ -1,19 +1,26 @@
 import { analyzePost, getEmbedding } from "./ai";
-import { DEFAULT_USER_AGENT } from "./constants";
+import {
+  DEFAULT_INGEST_LISTING_LIMIT,
+  DEFAULT_INGEST_MAX_CALLS_PER_CYCLE,
+  DEFAULT_INGEST_MIN_REQUEST_INTERVAL_MS,
+  DEFAULT_USER_AGENT,
+} from "./constants";
 import {
   findNearestCluster,
   attachPostToCluster,
   createClusterFromPost,
 } from "./clustering";
 import { buildPainRegex, passesHeuristicFilter } from "./heuristics";
-import { fetchRssFeed, normalizeFeedItems } from "./rss";
+import { fetchSubredditNewListing, normalizeRedditListingItems } from "./rss";
 import { sqliteVecReady } from "./sqlite";
 import {
+  getRedditIngestSyncStateMap,
   getIngestSettings,
   isPostAlreadyAnalyzed,
   listAllAnalyzedPosts,
   pruneOrphanClusters,
   resetOpportunityData,
+  upsertRedditIngestSyncState,
 } from "./sqlite-helpers";
 import { sendDiscordNewPostNotification } from "./notifications";
 import {
@@ -22,6 +29,45 @@ import {
   startReanalyzeProgress,
   updateReanalyzeProgress,
 } from "./reanalyze-progress";
+
+let ingestLimiterChain = Promise.resolve();
+let lastIngestRequestAt = 0;
+
+function normalizeSubredditList(subredditList = []) {
+  return [
+    ...new Set(
+      subredditList.map((item) =>
+        String(item || "")
+          .trim()
+          .toLowerCase(),
+      ),
+    ),
+  ].filter(Boolean);
+}
+
+function runWithIngestLimiter(task) {
+  const run = async () => {
+    const elapsed = Date.now() - lastIngestRequestAt;
+    const waitMs = Math.max(
+      0,
+      DEFAULT_INGEST_MIN_REQUEST_INTERVAL_MS - elapsed,
+    );
+
+    if (waitMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+
+    try {
+      return await task();
+    } finally {
+      lastIngestRequestAt = Date.now();
+    }
+  };
+
+  const scheduled = ingestLimiterChain.then(run, run);
+  ingestLimiterChain = scheduled.catch(() => {});
+  return scheduled;
+}
 
 export async function runIngestion({
   subredditList,
@@ -35,7 +81,9 @@ export async function runIngestion({
   }
 
   const settings = getIngestSettings();
-  const effectiveSubredditList = subredditList || settings.subreddit_list;
+  const effectiveSubredditList = normalizeSubredditList(
+    subredditList || settings.subreddit_list,
+  );
   const effectiveHeuristicPatterns =
     heuristicPatterns || settings.heuristic_patterns;
 
@@ -46,29 +94,81 @@ export async function runIngestion({
 
   const now = Math.floor(Date.now() / 1000);
   const regex = buildPainRegex(effectiveHeuristicPatterns);
-
-  console.log(
-    `[engine] ingest start configured_subreddits=${(effectiveSubredditList || []).join(",")} threshold=${effectiveClusterDistanceThreshold}`,
+  const syncStateMap = getRedditIngestSyncStateMap(effectiveSubredditList);
+  const sortedSubreddits = [...effectiveSubredditList].sort((a, b) => {
+    const aChecked = Number(syncStateMap[a]?.last_checked_at || 0);
+    const bChecked = Number(syncStateMap[b]?.last_checked_at || 0);
+    return aChecked - bChecked;
+  });
+  const cycleSubreddits = sortedSubreddits.slice(
+    0,
+    DEFAULT_INGEST_MAX_CALLS_PER_CYCLE,
   );
 
-  const feed = await fetchRssFeed({
-    subreddits: effectiveSubredditList,
-    userAgent: DEFAULT_USER_AGENT,
-  });
+  console.log(
+    `[engine] ingest start configured_subreddits=${effectiveSubredditList.join(",")} cycle_subreddits=${cycleSubreddits.join(",")} threshold=${effectiveClusterDistanceThreshold}`,
+  );
 
-  const posts = normalizeFeedItems(feed);
+  const posts = [];
+  const fetchErrors = [];
+
+  for (const subreddit of cycleSubreddits) {
+    const state = syncStateMap[subreddit] || null;
+
+    try {
+      const listing = await runWithIngestLimiter(() =>
+        fetchSubredditNewListing({
+          subreddit,
+          limit: DEFAULT_INGEST_LISTING_LIMIT,
+          userAgent: DEFAULT_USER_AGENT,
+        }),
+      );
+      const fetchedPosts = normalizeRedditListingItems(listing, { subreddit });
+
+      let incrementalPosts = fetchedPosts;
+      if (state?.last_seen_fullname) {
+        const markerIndex = fetchedPosts.findIndex(
+          (post) => post.fullname === state.last_seen_fullname,
+        );
+
+        if (markerIndex >= 0) {
+          incrementalPosts = fetchedPosts.slice(0, markerIndex);
+        }
+      }
+
+      posts.push(...incrementalPosts);
+
+      upsertRedditIngestSyncState({
+        subreddit,
+        lastSeenFullname:
+          fetchedPosts[0]?.fullname || state?.last_seen_fullname || null,
+        lastSeenCreatedUtc:
+          fetchedPosts[0]?.publishedAt || state?.last_seen_created_utc || null,
+        lastCheckedAt: now,
+      });
+    } catch (error) {
+      fetchErrors.push(subreddit);
+      console.error(`[engine] subreddit fetch failed r/${subreddit}`, error);
+
+      upsertRedditIngestSyncState({
+        subreddit,
+        lastSeenFullname: state?.last_seen_fullname || null,
+        lastSeenCreatedUtc: state?.last_seen_created_utc || null,
+        lastCheckedAt: now,
+      });
+    }
+  }
+
   const filtered = posts.filter((post) =>
     passesHeuristicFilter({ title: post.title, body: post.body, regex }),
   );
-  const seenSubreddits = [
-    ...new Set(posts.map((post) => post.subreddit).filter(Boolean)),
-  ];
+  const seenSubreddits = cycleSubreddits;
   const filteredSubreddits = [
     ...new Set(filtered.map((post) => post.subreddit).filter(Boolean)),
   ];
 
   console.log(
-    `[engine] ingest subreddits_seen=${seenSubreddits.join(",")} subreddits_filtered=${filteredSubreddits.join(",")}`,
+    `[engine] ingest calls=${cycleSubreddits.length} fetch_errors=${fetchErrors.length} subreddits_seen=${seenSubreddits.join(",")} subreddits_filtered=${filteredSubreddits.join(",")}`,
   );
 
   const stats = {
@@ -82,6 +182,8 @@ export async function runIngestion({
     prunedOrphans: 0,
     notified: 0,
     notifyErrors: 0,
+    redditRequests: cycleSubreddits.length,
+    fetchErrors: fetchErrors.length,
   };
 
   for (const post of filtered) {

@@ -3,6 +3,9 @@ export const DEFAULT_REDDIT_TIMEOUT_MS = 15000;
 export const DEFAULT_REDDIT_MAX_RETRIES = 4;
 export const DEFAULT_CLUSTER_DISTANCE_THRESHOLD = 0.65;
 export const DEFAULT_USER_AGENT = "market-validator/1.0";
+export const DEFAULT_INGEST_MAX_CALLS_PER_CYCLE = 5;
+export const DEFAULT_INGEST_LISTING_LIMIT = 50;
+export const DEFAULT_INGEST_MIN_REQUEST_INTERVAL_MS = 1200;
 
 export const DEFAULT_SUBREDDITS = [
   // General Business Operations (High volume of real problems)

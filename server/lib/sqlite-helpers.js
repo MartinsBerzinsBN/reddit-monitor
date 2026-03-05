@@ -268,6 +268,81 @@ export function getIngestSettings() {
   };
 }
 
+function normalizeSubredditKey(subreddit) {
+  return String(subreddit || "")
+    .trim()
+    .toLowerCase();
+}
+
+export function getRedditIngestSyncStateMap(subreddits = []) {
+  const normalized = [...new Set(subreddits.map(normalizeSubredditKey))].filter(
+    Boolean,
+  );
+
+  if (!normalized.length) {
+    return {};
+  }
+
+  const placeholders = normalized.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `
+        SELECT subreddit, last_seen_fullname, last_seen_created_utc, last_checked_at, updated_at
+        FROM reddit_ingest_sync_state
+        WHERE subreddit IN (${placeholders})
+      `,
+    )
+    .all(...normalized);
+
+  return rows.reduce((acc, row) => {
+    acc[row.subreddit] = row;
+    return acc;
+  }, {});
+}
+
+export function upsertRedditIngestSyncState({
+  subreddit,
+  lastSeenFullname = null,
+  lastSeenCreatedUtc = null,
+  lastCheckedAt,
+}) {
+  const key = normalizeSubredditKey(subreddit);
+  if (!key) {
+    return;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const safeLastCheckedAt = Number.isFinite(Number(lastCheckedAt))
+    ? Math.floor(Number(lastCheckedAt))
+    : now;
+  const safeLastSeenCreatedUtc = Number.isFinite(Number(lastSeenCreatedUtc))
+    ? Math.floor(Number(lastSeenCreatedUtc))
+    : null;
+
+  db.prepare(
+    `
+      INSERT INTO reddit_ingest_sync_state (
+        subreddit,
+        last_seen_fullname,
+        last_seen_created_utc,
+        last_checked_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(subreddit) DO UPDATE SET
+        last_seen_fullname = excluded.last_seen_fullname,
+        last_seen_created_utc = excluded.last_seen_created_utc,
+        last_checked_at = excluded.last_checked_at,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    key,
+    lastSeenFullname ? String(lastSeenFullname) : null,
+    safeLastSeenCreatedUtc,
+    safeLastCheckedAt,
+    now,
+  );
+}
+
 export function createCluster({ ID, title, description, solutionIdea, now }) {
   const stmt = db.prepare(
     `

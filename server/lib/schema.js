@@ -70,6 +70,17 @@ export function initSchema(db, { sqliteVecLoaded = false } = {}) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_link_quality_runs_finished_at ON link_quality_runs(finished_at DESC);
+
+    CREATE TABLE IF NOT EXISTS reddit_ingest_sync_state (
+      subreddit TEXT PRIMARY KEY,
+      last_seen_fullname TEXT,
+      last_seen_created_utc INTEGER,
+      last_checked_at INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_reddit_ingest_sync_last_checked_at
+      ON reddit_ingest_sync_state(last_checked_at ASC);
   `);
 
   const analyzedPostsColumns = db
